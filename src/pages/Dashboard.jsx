@@ -21,6 +21,7 @@ import {
   Plus,
   CheckCircle2,
   TrendingUp,
+  RotateCw,
 } from "lucide-react";
 import { useApp } from "../context/AppContext";
 import { Card, EmptyState, Avatar, LocataireLink } from "../components/ui";
@@ -87,6 +88,7 @@ export default function Dashboard() {
 
   const [onglet, setOnglet] = useState("vue");
   const [vueCourbe, setVueCourbe] = useState("recettes"); // "recettes" | "flux" | "solde"
+  const [chartKey, setChartKey] = useState(0);
 
   const serie12 = serieMensuelle(12);
   const serie = serie12.map((s) => {
@@ -209,7 +211,7 @@ export default function Dashboard() {
       </div>
 
       {onglet === "vue" && (
-        <>
+        <div key="vue" className="tab-pane-transition">
           {/* Courbe financière experte sur 12 mois */}
           <Card className="chart-card" style={{ marginBottom: "1.5rem" }}>
             <div className="chart-header-container">
@@ -223,27 +225,38 @@ export default function Dashboard() {
                 </p>
               </div>
 
-              <div className="chart-segmented-control">
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                <div className="chart-segmented-control">
+                  <button
+                    type="button"
+                    className={`chart-segmented-pill ${vueCourbe === "recettes" ? "active" : ""}`}
+                    onClick={() => setVueCourbe("recettes")}
+                  >
+                    Recettes
+                  </button>
+                  <button
+                    type="button"
+                    className={`chart-segmented-pill ${vueCourbe === "flux" ? "active" : ""}`}
+                    onClick={() => setVueCourbe("flux")}
+                  >
+                    Recettes vs Dépenses
+                  </button>
+                  <button
+                    type="button"
+                    className={`chart-segmented-pill ${vueCourbe === "solde" ? "active" : ""}`}
+                    onClick={() => setVueCourbe("solde")}
+                  >
+                    Trésorerie nette
+                  </button>
+                </div>
                 <button
                   type="button"
-                  className={`chart-segmented-pill ${vueCourbe === "recettes" ? "active" : ""}`}
-                  onClick={() => setVueCourbe("recettes")}
+                  className="btn-icon-subtle chart-refresh-btn"
+                  onClick={() => setChartKey((k) => k + 1)}
+                  title="Rejouer l'animation de la courbe"
+                  aria-label="Rejouer l'animation"
                 >
-                  Recettes
-                </button>
-                <button
-                  type="button"
-                  className={`chart-segmented-pill ${vueCourbe === "flux" ? "active" : ""}`}
-                  onClick={() => setVueCourbe("flux")}
-                >
-                  Recettes vs Dépenses
-                </button>
-                <button
-                  type="button"
-                  className={`chart-segmented-pill ${vueCourbe === "solde" ? "active" : ""}`}
-                  onClick={() => setVueCourbe("solde")}
-                >
-                  Trésorerie nette
+                  <RotateCw size={14} />
                 </button>
               </div>
             </div>
@@ -279,7 +292,11 @@ export default function Dashboard() {
 
                 <div style={{ width: "100%", height: 280 }}>
                   <ResponsiveContainer width="100%" height={280}>
-                    <AreaChart data={serie} margin={{ top: 12, right: 12, left: -6, bottom: 0 }}>
+                    <AreaChart
+                      key={`${vueCourbe}-${chartKey}`}
+                      data={serie}
+                      margin={{ top: 12, right: 12, left: -6, bottom: 0 }}
+                    >
                       <defs>
                         <linearGradient id="gradRecettes" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="0%" stopColor="#0152BD" stopOpacity={0.25} />
@@ -313,7 +330,10 @@ export default function Dashboard() {
 
                       {vueCourbe === "recettes" && (
                         <Area
-                          isAnimationActive={false}
+                          isAnimationActive={true}
+                          animationDuration={1200}
+                          animationEasing="ease-out"
+                          animationBegin={100}
                           type="monotone"
                           dataKey="recettes"
                           name="Recettes"
@@ -328,7 +348,10 @@ export default function Dashboard() {
                       {vueCourbe === "flux" && (
                         <>
                           <Area
-                            isAnimationActive={false}
+                            isAnimationActive={true}
+                            animationDuration={1200}
+                            animationEasing="ease-out"
+                            animationBegin={100}
                             type="monotone"
                             dataKey="recettes"
                             name="Recettes"
@@ -339,7 +362,10 @@ export default function Dashboard() {
                             activeDot={{ r: 6, stroke: "#FFFFFF", strokeWidth: 3, fill: "#0152BD" }}
                           />
                           <Area
-                            isAnimationActive={false}
+                            isAnimationActive={true}
+                            animationDuration={1200}
+                            animationEasing="ease-out"
+                            animationBegin={350}
                             type="monotone"
                             dataKey="depenses"
                             name="Dépenses"
@@ -355,7 +381,10 @@ export default function Dashboard() {
 
                       {vueCourbe === "solde" && (
                         <Area
-                          isAnimationActive={false}
+                          isAnimationActive={true}
+                          animationDuration={1200}
+                          animationEasing="ease-out"
+                          animationBegin={100}
                           type="monotone"
                           dataKey="solde"
                           name="Trésorerie nette"
@@ -478,51 +507,53 @@ export default function Dashboard() {
               )}
             </Card>
           </div>
-        </>
+        </div>
       )}
 
       {onglet === "bilan" && (
-        <Card title="Résultat financier par immeuble">
-          {bilans.length === 0 ? (
-            <EmptyState icon={Building2} message="Aucun immeuble enregistré." />
-          ) : (
-            <div className="table-wrapper">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Immeuble</th>
-                    <th className="num">Recettes</th>
-                    <th className="num">Dépenses</th>
-                    <th className="num">Résultat</th>
-                    <th className="num">Occupation</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {bilans.map((b) => (
-                    <tr key={b.id}>
-                      <td>
-                        <Link to={`/immeubles/${b.id}`} style={{ fontWeight: 600 }}>
-                          {b.nom}
-                        </Link>
-                      </td>
-                      <td className="num">{formatMoney(b.bilan.recettes)}</td>
-                      <td className="num">{formatMoney(b.bilan.depenses)}</td>
-                      <td
-                        className="num"
-                        style={{ fontWeight: 700, color: b.bilan.resultat >= 0 ? "var(--success)" : "var(--danger)" }}
-                      >
-                        {formatMoney(b.bilan.resultat)}
-                      </td>
-                      <td className="num">
-                        {b.bilan.nbLotsOccupes}/{b.bilan.nbLots}
-                      </td>
+        <div key="bilan" className="tab-pane-transition">
+          <Card title="Résultat financier par immeuble">
+            {bilans.length === 0 ? (
+              <EmptyState icon={Building2} message="Aucun immeuble enregistré." />
+            ) : (
+              <div className="table-wrapper">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Immeuble</th>
+                      <th className="num">Recettes</th>
+                      <th className="num">Dépenses</th>
+                      <th className="num">Résultat</th>
+                      <th className="num">Occupation</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Card>
+                  </thead>
+                  <tbody>
+                    {bilans.map((b) => (
+                      <tr key={b.id}>
+                        <td>
+                          <Link to={`/immeubles/${b.id}`} style={{ fontWeight: 600 }}>
+                            {b.nom}
+                          </Link>
+                        </td>
+                        <td className="num">{formatMoney(b.bilan.recettes)}</td>
+                        <td className="num">{formatMoney(b.bilan.depenses)}</td>
+                        <td
+                          className="num"
+                          style={{ fontWeight: 700, color: b.bilan.resultat >= 0 ? "var(--success)" : "var(--danger)" }}
+                        >
+                          {formatMoney(b.bilan.resultat)}
+                        </td>
+                        <td className="num">
+                          {b.bilan.nbLotsOccupes}/{b.bilan.nbLots}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+        </div>
       )}
     </div>
   );

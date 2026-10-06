@@ -3,7 +3,7 @@
 
 import { useState, useEffect } from "react";
 
-export default function SplashScreen({ onFinish, duration = 3000 }) {
+export default function SplashScreen({ onFinish, onStartFade, duration = 2000 }) {
   const [fading, setFading] = useState(false);
   const [entered, setEntered] = useState(false);
 
@@ -13,18 +13,19 @@ export default function SplashScreen({ onFinish, duration = 3000 }) {
 
     const fadeTimer = setTimeout(() => {
       setFading(true);
+      if (onStartFade) onStartFade();
     }, duration);
 
     const removeTimer = setTimeout(() => {
       if (onFinish) onFinish();
-    }, duration + 400);
+    }, duration + 450);
 
     return () => {
       clearTimeout(enterTimer);
       clearTimeout(fadeTimer);
       clearTimeout(removeTimer);
     };
-  }, [duration, onFinish]);
+  }, [duration, onFinish, onStartFade]);
 
   return (
     <div

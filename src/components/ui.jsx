@@ -37,11 +37,14 @@ export function Modal({ title, onClose, children, footer, width }) {
   const ref = useRef(null);
 
   useEffect(() => {
+    ref.current?.focus();
+  }, []);
+
+  useEffect(() => {
     const onKey = (e) => {
       if (e.key === "Escape") onClose();
     };
     document.addEventListener("keydown", onKey);
-    ref.current?.focus();
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
 
@@ -92,10 +95,10 @@ export function ConfirmDialog({ title = "Confirmer", message, confirmLabel = "Su
 /**
  * Champ de formulaire. `error` affiche un message sous le champ.
  */
-export function Field({ label, error, hint, required, children, className = "" }) {
+export function Field({ label, htmlFor, error, hint, required, children, className = "" }) {
   return (
     <div className={`form-group ${className}`}>
-      <label>
+      <label htmlFor={htmlFor}>
         {label}
         {required && <span aria-hidden="true"> *</span>}
       </label>

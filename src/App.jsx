@@ -7,11 +7,14 @@ import { Suspense, lazy, useState, useEffect } from "react";
 import { BrowserRouter, Routes, Route, Link } from "react-router-dom";
 import { AppProvider } from "./context/AppContext";
 import { ToastProvider } from "./context/ToastContext";
+import { AuthProvider } from "./context/AuthContext";
 import Layout from "./components/Layout";
+import ProtectedRoute from "./components/ProtectedRoute";
 import SplashScreen from "./components/SplashScreen";
 import { EmptyState } from "./components/ui";
 import { FileQuestion } from "lucide-react";
 
+const Login = lazy(() => import("./pages/Login"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 
 // Immeubles
@@ -61,58 +64,90 @@ function Introuvable() {
 
 export default function App() {
   const [splashActif, setSplashActif] = useState(true);
+  const [appPrete, setAppPrete] = useState(false);
 
   useEffect(() => {
-    const handleReload = () => setSplashActif(true);
+    const handleReload = () => {
+      setSplashActif(true);
+      setAppPrete(false);
+    };
+    const handleLogin = () => setSplashActif(true);
     window.addEventListener("cag:reconnect", handleReload);
-    return () => window.removeEventListener("cag:reconnect", handleReload);
+    window.addEventListener("cag:login", handleLogin);
+    return () => {
+      window.removeEventListener("cag:reconnect", handleReload);
+      window.removeEventListener("cag:login", handleLogin);
+    };
   }, []);
 
   return (
     <AppProvider>
       <ToastProvider>
-        {splashActif && <SplashScreen onFinish={() => setSplashActif(false)} duration={2850} />}
-        <BrowserRouter>
-          <Suspense fallback={<Chargement />}>
-            <Routes>
-              <Route element={<Layout />}>
-                <Route index element={<Dashboard />} />
+        <AuthProvider>
+          {splashActif && (
+            <SplashScreen
+              duration={1800}
+              onStartFade={() => setAppPrete(true)}
+              onFinish={() => {
+                setAppPrete(true);
+                setSplashActif(false);
+              }}
+            />
+          )}
+          {appPrete && (
+            <BrowserRouter>
+              <Suspense fallback={<Chargement />}>
+              <Routes>
+                {/* Route publique de connexion */}
+                <Route path="/login" element={<Login />} />
 
-                <Route path="immeubles">
-                  <Route index element={<ImmeubleList />} />
-                  <Route path="nouveau" element={<ImmeubleForm />} />
-                  <Route path=":id" element={<ImmeubleDetail />} />
-                  <Route path=":id/modifier" element={<ImmeubleForm />} />
+                {/* Routes protégées par authentification */}
+                <Route
+                  element={
+                    <ProtectedRoute>
+                      <Layout />
+                    </ProtectedRoute>
+                  }
+                >
+                  <Route index element={<Dashboard />} />
+
+                  <Route path="immeubles">
+                    <Route index element={<ImmeubleList />} />
+                    <Route path="nouveau" element={<ImmeubleForm />} />
+                    <Route path=":id" element={<ImmeubleDetail />} />
+                    <Route path=":id/modifier" element={<ImmeubleForm />} />
+                  </Route>
+
+                  <Route path="locataires">
+                    <Route index element={<LocataireList />} />
+                    <Route path="nouveau" element={<LocataireForm />} />
+                    <Route path=":id" element={<LocataireDetail />} />
+                    <Route path=":id/modifier" element={<LocataireForm />} />
+                    <Route path=":id/bail" element={<BailForm />} />
+                    <Route path=":id/paiement" element={<PaiementForm />} />
+                  </Route>
+
+                  <Route path="paiements">
+                    <Route index element={<PaiementList />} />
+                    <Route path="nouveau" element={<PaiementForm />} />
+                  </Route>
+
+                  <Route path="quittances">
+                    <Route index element={<QuittanceList />} />
+                    <Route path=":id" element={<QuittanceView />} />
+                  </Route>
+
+                  <Route path="depenses" element={<DepenseList />} />
+                  <Route path="journal" element={<Journal />} />
+                  <Route path="parametres" element={<Parametres />} />
+
+                  <Route path="*" element={<Introuvable />} />
                 </Route>
-
-                <Route path="locataires">
-                  <Route index element={<LocataireList />} />
-                  <Route path="nouveau" element={<LocataireForm />} />
-                  <Route path=":id" element={<LocataireDetail />} />
-                  <Route path=":id/modifier" element={<LocataireForm />} />
-                  <Route path=":id/bail" element={<BailForm />} />
-                  <Route path=":id/paiement" element={<PaiementForm />} />
-                </Route>
-
-                <Route path="paiements">
-                  <Route index element={<PaiementList />} />
-                  <Route path="nouveau" element={<PaiementForm />} />
-                </Route>
-
-                <Route path="quittances">
-                  <Route index element={<QuittanceList />} />
-                  <Route path=":id" element={<QuittanceView />} />
-                </Route>
-
-                <Route path="depenses" element={<DepenseList />} />
-                <Route path="journal" element={<Journal />} />
-                <Route path="parametres" element={<Parametres />} />
-
-                <Route path="*" element={<Introuvable />} />
-              </Route>
-            </Routes>
-          </Suspense>
-        </BrowserRouter>
+              </Routes>
+            </Suspense>
+          </BrowserRouter>
+        )}
+        </AuthProvider>
       </ToastProvider>
     </AppProvider>
   );

@@ -20,6 +20,16 @@ import { formatMoney, formatDate, pluriel } from "../../utils/format";
 
 const VIDE = { immeubleId: "", categorie: "entretien", montant: "", date: "", note: "" };
 
+const CATEGORIE_COLORS = {
+  entretien: "#0152BD",      // Bleu royal CAG
+  reparation: "#10B981",     // Vert émeraude
+  charges: "#8B5CF6",        // Violet améthyste
+  travaux: "#F59E0B",        // Ambre chaleureux
+  fourniture: "#06B6D4",     // Cyan lagon
+  frais_notaire: "#EC4899",  // Rose framboise
+  autre: "#64748B",          // Ardoise
+};
+
 export default function DepenseList() {
   const { depenses, immeubles, CATEGORIES, saveDepense, removeDepense } = useApp();
   const { addToast } = useToast();
@@ -48,20 +58,35 @@ export default function DepenseList() {
 
   const total = lignes.reduce((s, d) => s + d.montant, 0);
 
-  // Total par catégorie, pour le tableau récapitulatif.
+  // Total par catégorie, pour le tableau récapitulatif et le graphique
   const parCategorie = useMemo(() => {
+    // Si l'utilisateur filtre sur une catégorie spécifique, on conserve la répartition globale
+    // de l'immeuble ou de la sélection pour garder un contexte comparatif visuel
+    const baseDepenses =
+      filtreCategorie !== "toutes"
+        ? depenses.filter((d) => (filtreImmeuble !== "tous" ? d.immeubleId === filtreImmeuble : true))
+        : lignes;
+
+    const totalBase = baseDepenses.reduce((s, d) => s + d.montant, 0);
     const map = new Map();
-    for (const d of lignes) {
+    for (const d of baseDepenses) {
       map.set(d.categorie, (map.get(d.categorie) || 0) + d.montant);
     }
     return [...map.entries()]
-      .map(([id, montant]) => ({
-        id,
-        label: CATEGORIES.find((c) => c.id === id)?.label || id,
-        montant,
-      }))
+      .map(([id, montant]) => {
+        const cat = CATEGORIES.find((c) => c.id === id);
+        const pct = totalBase > 0 ? (montant / totalBase) * 100 : 0;
+        return {
+          id,
+          label: cat?.label || id,
+          montant,
+          pct,
+          color: CATEGORIE_COLORS[id] || "#64748B",
+          active: filtreCategorie === "toutes" || filtreCategorie === id,
+        };
+      })
       .sort((a, b) => b.montant - a.montant);
-  }, [lignes, CATEGORIES]);
+  }, [lignes, depenses, filtreImmeuble, filtreCategorie, CATEGORIES]);
 
   const set = (champ) => (e) => setForm((f) => ({ ...f, [champ]: e.target.value }));
 
@@ -242,28 +267,57 @@ export default function DepenseList() {
           </Card>
         </div>
 
-        <Card title="Répartition par catégorie">
+        <Card
+          title="Répartition par catégorie"
+          action={
+            parCategorie.length > 0 && (
+              <span className="badge badge-neutral" style={{ fontSize: "0.78rem" }}>
+                Total : {formatMoney(total)}
+              </span>
+            )
+          }
+        >
           {parCategorie.length === 0 ? (
             <EmptyState icon={TrendingDown} message="Aucune dépense à répartir." />
           ) : (
-            <div className="stack" style={{ gap: "0.7rem" }}>
-              {parCategorie.map((c) => {
-                const pct = total > 0 ? (c.montant / total) * 100 : 0;
-                return (
-                  <div key={c.id}>
-                    <div className="row" style={{ justifyContent: "space-between", fontSize: "0.85rem" }}>
-                      <span>{c.label}</span>
-                      <span>
-                        <strong>{formatMoney(c.montant)}</strong>{" "}
-                        <span className="text-muted">({Math.round(pct)} %)</span>
-                      </span>
+            <div className="depenses-categories-list">
+              {parCategorie.map((c) => (
+                <div
+                  key={c.id}
+                  className={`depense-cat-row ${!c.active ? "dimmed" : ""}`}
+                  onClick={() => {
+                    if (filtreCategorie === c.id) {
+                      setFiltreCategorie("toutes");
+                    } else {
+                      setFiltreCategorie(c.id);
+                    }
+                  }}
+                  title={`Filtrer par ${c.label} (cliquez pour isoler / réinitialiser)`}
+                >
+                  <div className="depense-cat-header">
+                    <div className="depense-cat-title-group">
+                      <span
+                        className="depense-cat-dot"
+                        style={{ backgroundColor: c.color }}
+                      />
+                      <span className="depense-cat-name">{c.label}</span>
                     </div>
-                    <div style={{ height: 6, marginTop: "0.25rem", background: "var(--border)", borderRadius: 999, overflow: "hidden" }}>
-                      <div style={{ width: `${pct}%`, height: "100%", background: "var(--warning)" }} />
+                    <div className="depense-cat-values">
+                      <strong className="depense-cat-amount">{formatMoney(c.montant)}</strong>
+                      <span className="depense-cat-badge">{c.pct.toFixed(0)} %</span>
                     </div>
                   </div>
-                );
-              })}
+                  <div className="depense-cat-track">
+                    <div
+                      className="depense-cat-bar"
+                      style={{
+                        width: `${Math.max(c.pct, 3)}%`,
+                        backgroundColor: c.color,
+                      }}
+                    />
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </Card>

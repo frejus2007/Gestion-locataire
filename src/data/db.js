@@ -244,6 +244,30 @@ export function updateBail(id, data) {
   return dupliquer(db.baux[idx]);
 }
 
+export function updateLoyer(id, data) {
+  const idx = db.loyers.findIndex((l) => l.id === id);
+  if (idx < 0) return null;
+
+  const postes = ["loyer", "eau", "electricite", "orduresMenageres", "autre1", "autre2"];
+  const montants = Object.fromEntries(
+    postes.map((poste) => {
+      const montant = Number(data[poste]);
+      if (!Number.isSafeInteger(montant) || montant < 0) {
+        throw new Error("Chaque montant doit être un nombre entier positif ou nul");
+      }
+      return [poste, montant];
+    })
+  );
+  const montantDu = postes.reduce((total, poste) => total + montants[poste], 0);
+  if (!Number.isSafeInteger(montantDu)) {
+    throw new Error("Le total des frais dépasse le montant autorisé");
+  }
+
+  db.loyers[idx] = { ...db.loyers[idx], ...montants, montantDu };
+  recomputeStatutLoyers([id]);
+  return dupliquer(db.loyers[idx]);
+}
+
 // Supprime un bail et tout ce qui en dépend (loyers, paiements, quittances).
 function deleteBaux(bailIds) {
   if (!bailIds.length) return;
@@ -335,6 +359,12 @@ export function genererLoyersPourPeriode(periode, bailIds = null, { jusquA = tru
       id: nextId("loy"),
       bailId: bail.id,
       periode,
+      loyer: bail.loyerMensuel,
+      eau: 0,
+      electricite: 0,
+      orduresMenageres: 0,
+      autre1: 0,
+      autre2: 0,
       montantDu: bail.loyerMensuel,
       // Le statut est dérivé, mais on le stocke pour éviter de recalculer
       // à chaque rendu ; il est réécrit par recomputeStatutLoyers().

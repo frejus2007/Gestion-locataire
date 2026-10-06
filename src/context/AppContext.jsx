@@ -87,6 +87,7 @@ export function AppProvider({ children }) {
       genererDepuis: (bailId, periodeDebut) =>
         run(() => db.genererLoyersDepuis(bailId, periodeDebut)),
       genererPeriode: (periode) => run(() => db.genererLoyersPourPeriode(periode)),
+      saveLoyer: (id, data) => run(() => db.updateLoyer(id, data)),
 
       // Paiements
       enregistrerPaiement: (data) => run(() => db.enregistrerPaiement(data)),

@@ -33,6 +33,7 @@ export default function LocataireDetail() {
     loyersDe,
     paiementsDe,
     quittancesParPaiement,
+    saveLoyer,
     impayesDe,
     saveBail,
     removeLocataire,
@@ -329,6 +330,7 @@ export default function LocataireDetail() {
           loyersDe={loyersDe}
           paiementsDe={paiementsDe}
           quittancesParPaiement={quittancesParPaiement}
+          saveLoyer={saveLoyer}
         />
       ) : (
         <Card>

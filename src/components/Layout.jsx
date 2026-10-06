@@ -2,7 +2,7 @@
 // barre du haut et navigation basse sur mobile.
 
 import { useState, useEffect } from "react";
-import { Link, NavLink, Outlet } from "react-router-dom";
+import { Link, NavLink, Outlet, useNavigate, useLocation } from "react-router-dom";
 import {
   LayoutDashboard,
   Building2,
@@ -18,8 +18,11 @@ import {
   Sun,
   AlertTriangle,
   RotateCw,
+  LogOut,
 } from "lucide-react";
 import { useApp } from "../context/AppContext";
+import { useAuth } from "../context/AuthContext";
+import { useToast } from "../context/ToastContext";
 
 const NAVIGATION = [
   { section: "Pilotage" },
@@ -46,15 +49,28 @@ export default function Layout() {
   const [sombre, setSombre] = useState(() => localStorage.getItem("theme") === "dark");
   const [syncing, setSyncing] = useState(false);
   const { impayesGlobaux, proprietaire } = useApp();
+  const { user, logout } = useAuth();
+  const { addToast } = useToast();
+  const navigate = useNavigate();
+  const location = useLocation();
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", sombre ? "dark" : "light");
     localStorage.setItem("theme", sombre ? "dark" : "light");
   }, [sombre]);
 
+  const handleLogout = () => {
+    logout();
+    addToast("Vous avez été déconnecté avec succès.", "info");
+    navigate("/login", { replace: true });
+  };
+
   const nbImpayes = impayesGlobaux().length;
-  const initiales = `${proprietaire?.prenoms?.[0] || "J"}${proprietaire?.nom?.[0] || "K"}`.toUpperCase();
-  const nomComplet = [proprietaire?.prenoms, proprietaire?.nom].filter(Boolean).join(" ") || "Jean-Marc KOUASSI";
+  const userNom = user?.nom || proprietaire?.nom || "KOUASSI";
+  const userPrenoms = user?.prenoms || proprietaire?.prenoms || "Jean-Marc";
+  const initiales = `${userPrenoms[0] || "J"}${userNom[0] || "K"}`.toUpperCase();
+  const nomComplet = [userPrenoms, userNom].filter(Boolean).join(" ");
+  const userRole = user?.role || "Bailleur gestionnaire";
 
   // Le menu se referme dès qu'on change de page : pas d'effet nécessaire,
   // l'événement de navigation suffit à déclencher le re-rendu.
@@ -122,7 +138,7 @@ export default function Layout() {
               </div>
               <div className="sidebar-user-details">
                 <strong className="sidebar-user-name" title={nomComplet}>{nomComplet}</strong>
-                <span className="sidebar-user-role">Bailleur gestionnaire</span>
+                <span className="sidebar-user-role">{userRole}</span>
               </div>
             </Link>
             <button
@@ -160,6 +176,16 @@ export default function Layout() {
                 <div className="theme-toggle-thumb" />
               </div>
             </button>
+            <button
+              type="button"
+              className="sidebar-logout-btn"
+              onClick={handleLogout}
+              title="Se déconnecter"
+              aria-label="Se déconnecter"
+            >
+              <LogOut size={18} className="nav-icon" />
+              <span>Déconnexion</span>
+            </button>
           </div>
         </div>
       </aside>
@@ -187,8 +213,19 @@ export default function Layout() {
           className="menu-btn"
           onClick={() => setSombre((s) => !s)}
           aria-label="Changer de thème"
+          title="Changer de thème"
         >
           {sombre ? <Sun size={20} /> : <Moon size={20} />}
+        </button>
+        <button
+          type="button"
+          className="menu-btn"
+          onClick={handleLogout}
+          aria-label="Déconnexion"
+          title="Se déconnecter"
+          style={{ color: "var(--danger)" }}
+        >
+          <LogOut size={19} />
         </button>
       </header>
 
@@ -201,7 +238,9 @@ export default function Layout() {
       )}
 
       <main className="main-content">
-        <Outlet />
+        <div key={location.pathname} className="page-transition-wrapper">
+          <Outlet />
+        </div>
       </main>
 
       <nav className="bottom-nav">
