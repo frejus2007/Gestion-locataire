@@ -5,7 +5,7 @@ import { Link } from "react-router-dom";
 import { Plus, Wallet, Search, Receipt, Inbox, FileText } from "lucide-react";
 import { useApp } from "../../context/AppContext";
 import { useToast } from "../../context/ToastContext";
-import { Card, EmptyState, Badge, Select, ConfirmDialog } from "../../components/ui";
+import { Card, EmptyState, Badge, Select, ConfirmDialog, Avatar, LocataireLink } from "../../components/ui";
 import { formatMoney, formatDate, periodeToLabel, pluriel } from "../../utils/format";
 
 export default function PaiementList() {
@@ -159,9 +159,12 @@ export default function PaiementList() {
                     <tr key={p.id}>
                       <td style={{ whiteSpace: "nowrap" }}>{formatDate(p.date)}</td>
                       <td>
-                        <Link to={`/locataires/${p.locataireId}`} style={{ fontWeight: 600 }}>
-                          {locataire ? `${locataire.nom} ${locataire.prenoms}` : "—"}
-                        </Link>
+                        <LocataireLink
+                          locataire={locataire}
+                          id={p.locataireId}
+                          avatar
+                          avatarSize={26}
+                        />
                       </td>
                       <td className="text-muted" style={{ fontSize: "0.83rem" }}>
                         {immeuble ? immeuble.nom : "—"}

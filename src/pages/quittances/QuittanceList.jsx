@@ -4,7 +4,7 @@ import { useState, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { FileText, Search, Eye, Printer } from "lucide-react";
 import { useApp } from "../../context/AppContext";
-import { Card, EmptyState, Select } from "../../components/ui";
+import { Card, EmptyState, Select, LocataireLink } from "../../components/ui";
 import { formatMoney, formatDate, periodeToLabel, periodeCourante, pluriel, accorde } from "../../utils/format";
 
 export default function QuittanceList() {
@@ -127,9 +127,12 @@ export default function QuittanceList() {
                     </td>
                     <td style={{ whiteSpace: "nowrap" }}>{formatDate(q.datePaiement)}</td>
                     <td>
-                      <Link to={`/locataires/${q.locataireId}`} style={{ fontWeight: 500 }}>
-                        {q.nomLocataire}
-                      </Link>
+                      <LocataireLink
+                        nom={q.nomLocataire}
+                        id={q.locataireId}
+                        avatar
+                        avatarSize={26}
+                      />
                     </td>
                     <td style={{ fontSize: "0.8rem", maxWidth: 190 }}>
                       {q.periodes.length === 0 ? (

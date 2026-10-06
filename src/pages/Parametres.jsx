@@ -6,7 +6,7 @@ import { Link } from "react-router-dom";
 import { Save, Shield, Upload, Trash2, CheckCircle2 } from "lucide-react";
 import { useApp } from "../context/AppContext";
 import { useToast } from "../context/ToastContext";
-import { Card, Field, TextInput, EmptyState, Badge } from "../components/ui";
+import { Card, Field, TextInput, EmptyState, Badge, LocataireLink } from "../components/ui";
 import { formatMoney } from "../utils/format";
 
 export default function Parametres() {
@@ -217,9 +217,12 @@ export default function Parametres() {
                         {enCours.map(({ bail, locataire, immeuble }) => (
                           <tr key={bail.id}>
                             <td>
-                              <Link to={`/locataires/${bail.locataireId}`} style={{ fontWeight: 600 }}>
-                                {locataire ? `${locataire.nom} ${locataire.prenoms}` : "—"}
-                              </Link>
+                              <LocataireLink
+                                locataire={locataire}
+                                id={bail.locataireId}
+                                avatar
+                                avatarSize={26}
+                              />
                               {!bailEstActif(bail) && (
                                 <div style={{ marginTop: "0.2rem" }}>
                                   <Badge classe="badge-amber">Bail terminé</Badge>
@@ -269,9 +272,12 @@ export default function Parametres() {
                         {restituees.map(({ bail, locataire }) => (
                           <tr key={bail.id}>
                             <td>
-                              <Link to={`/locataires/${bail.locataireId}`}>
-                                {locataire ? `${locataire.nom} ${locataire.prenoms}` : "—"}
-                              </Link>
+                              <LocataireLink
+                                locataire={locataire}
+                                id={bail.locataireId}
+                                avatar
+                                avatarSize={26}
+                              />
                             </td>
                             <td className="num text-muted">{formatMoney(bail.cautionVersee)}</td>
                             <td>

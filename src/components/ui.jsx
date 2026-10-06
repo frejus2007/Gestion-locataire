@@ -1,6 +1,5 @@
-// Petits composants d'interface réutilisés par les pages.
-
 import { useEffect, useRef } from "react";
+import { Link } from "react-router-dom";
 import { Inbox } from "lucide-react";
 
 /** Bloc de titre de section avec action à droite. */
@@ -22,8 +21,12 @@ export function Card({ title, action, children, className = "", ...rest }) {
 export function EmptyState({ icon: Icon = Inbox, message, action }) {
   return (
     <div className="empty-state">
-      <Icon className="empty-icon" size={26} />
-      <p>{message}</p>
+      <div className="empty-icon-halo">
+        <Icon size={24} />
+      </div>
+      <p style={{ margin: "0 0 0.5rem", fontWeight: 500, fontSize: "0.92rem", color: "var(--text-secondary)" }}>
+        {message}
+      </p>
       {action}
     </div>
   );
@@ -152,6 +155,64 @@ export function Avatar({ nom, prenoms, couleur, size = 38 }) {
 }
 
 /**
+ * Lien interactif vers la fiche d'un locataire, stylisé avec ou sans avatar.
+ * Remplace les liens textuels basiques soulignés par un rendu moderne et soigné.
+ */
+export function LocataireLink({
+  locataire,
+  id,
+  nom,
+  prenoms,
+  avatar = false,
+  avatarSize = 26,
+  telephone,
+  showPhone = false,
+  className = "",
+  style,
+}) {
+  const locId = id || locataire?.id;
+  const nomComplet = locataire
+    ? `${locataire.nom || ""} ${locataire.prenoms || ""}`.trim()
+    : [nom, prenoms].filter(Boolean).join(" ").trim() || "—";
+
+  if (!locId) {
+    return (
+      <span className={`locataire-chip no-link ${avatar ? "has-avatar" : "no-avatar"} ${className}`} style={style}>
+        {avatar && (
+          <Avatar
+            nom={locataire?.nom || nom}
+            prenoms={locataire?.prenoms || prenoms}
+            size={avatarSize}
+          />
+        )}
+        <span className="locataire-nom">{nomComplet}</span>
+      </span>
+    );
+  }
+
+  return (
+    <Link
+      to={`/locataires/${locId}`}
+      className={`locataire-chip ${avatar ? "has-avatar" : "no-avatar"} ${className}`}
+      style={style}
+      title={`Voir la fiche de ${nomComplet}`}
+    >
+      {avatar && (
+        <Avatar
+          nom={locataire?.nom || nom}
+          prenoms={locataire?.prenoms || prenoms}
+          size={avatarSize}
+        />
+      )}
+      <span className="locataire-nom">{nomComplet}</span>
+      {showPhone && (locataire?.telephone || telephone) && (
+        <span className="locataire-phone">{locataire?.telephone || telephone}</span>
+      )}
+    </Link>
+  );
+}
+
+/**
  * Barre de progression 0-100.
  */
 export function ProgressBar({ valeur, label, couleur = "var(--primary)" }) {
@@ -159,13 +220,13 @@ export function ProgressBar({ valeur, label, couleur = "var(--primary)" }) {
   return (
     <div>
       {label && (
-        <div className="row" style={{ justifyContent: "space-between", fontSize: "0.8rem", marginBottom: "0.3rem" }}>
-          <span className="text-muted">{label}</span>
-          <strong>{v} %</strong>
+        <div className="row" style={{ justifyContent: "space-between", fontSize: "0.82rem", marginBottom: "0.35rem" }}>
+          <span className="text-muted" style={{ fontWeight: 500 }}>{label}</span>
+          <strong style={{ fontVariantNumeric: "tabular-nums" }}>{v} %</strong>
         </div>
       )}
-      <div style={{ height: 7, background: "var(--border)", borderRadius: 999, overflow: "hidden" }}>
-        <div style={{ width: `${v}%`, height: "100%", background: couleur, transition: "width .3s" }} />
+      <div style={{ height: 8, background: "var(--bg-subtle)", border: "1px solid var(--border-light)", borderRadius: 9999, overflow: "hidden" }}>
+        <div style={{ width: `${v}%`, height: "100%", background: couleur, borderRadius: 9999, transition: "width .4s ease" }} />
       </div>
     </div>
   );

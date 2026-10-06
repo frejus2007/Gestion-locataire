@@ -143,8 +143,8 @@ export default function ImmeubleList() {
                       {formatMoney(b.resultat)}
                     </strong>
                   </div>
-                  <div style={{ height: 6, marginTop: "0.4rem" }}>
-                    <ProgressBar valeur={taux} couleur="var(--primary)" />
+                  <div style={{ marginTop: "0.5rem" }}>
+                    <ProgressBar valeur={taux} label="Occupation" couleur="var(--primary)" />
                   </div>
                 </div>
 

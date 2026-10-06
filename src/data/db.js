@@ -7,7 +7,7 @@
 //
 // Sémantique des montants : ce sont toujours des entiers en FCFA.
 
-import { periodeCourante, periodeDecalee, comparePeriode } from "../utils/format";
+import { periodeCourante, periodeDecalee, comparePeriode } from "../utils/format.js";
 
 // --- Compteur d'identifiants ---
 

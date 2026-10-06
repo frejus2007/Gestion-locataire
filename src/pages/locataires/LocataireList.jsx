@@ -138,7 +138,9 @@ export default function LocataireList() {
               <div className="entity-head">
                 <Avatar nom={loc.nom} prenoms={loc.prenoms} />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div className="entity-title">{loc.nom} {loc.prenoms}</div>
+                  <Link to={`/locataires/${loc.id}`} className="entity-title" title={`Voir la fiche de ${loc.nom} ${loc.prenoms}`}>
+                    {loc.nom} {loc.prenoms}
+                  </Link>
                   <div className="entity-sub row" style={{ gap: "0.25rem" }}>
                     <Phone size={11} /> {loc.telephone || "—"}
                   </div>

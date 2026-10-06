@@ -9,7 +9,7 @@ import { useNavigate, useParams, Link } from "react-router-dom";
 import { Save, X, Plus, Trash2, Home } from "lucide-react";
 import { useApp } from "../../context/AppContext";
 import { useToast } from "../../context/ToastContext";
-import { Card, Field, TextInput, Select, Modal, ConfirmDialog, ErrorBanner, EmptyState, Badge } from "../../components/ui";
+import { Card, Field, TextInput, Select, Modal, ConfirmDialog, ErrorBanner, EmptyState, Badge, LocataireLink } from "../../components/ui";
 import { formatMoney } from "../../utils/format";
 
 const VIDE = { nom: "", adresse: "", quartier: "", ville: "Cotonou", notes: "", dateAcquisition: "", statut: "actif" };
@@ -293,9 +293,11 @@ function LotTable({ immeubleId, onAjouter }) {
                   </td>
                   <td>
                     {bail && loc ? (
-                      <Link to={`/locataires/${loc.id}`} style={{ fontWeight: 500 }}>
-                        {loc.nom} {loc.prenoms}
-                      </Link>
+                      <LocataireLink
+                        locataire={loc}
+                        avatar
+                        avatarSize={24}
+                      />
                     ) : (
                       <Badge classe="badge-cyan">Vacant</Badge>
                     )}

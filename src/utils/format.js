@@ -4,27 +4,47 @@
 
 export function formatMoney(amount) {
   const n = Math.round(Number(amount) || 0);
-  return new Intl.NumberFormat("fr-FR").format(n) + " FCFA";
+  const formatted = new Intl.NumberFormat("fr-FR").format(n).replace(/[\u202F\u00A0]/g, " ");
+  return `${formatted} FCFA`;
 }
 
 // Montant sans la devise, pour les cellules de tableau et les graphiques.
 export function formatNumber(amount) {
-  return new Intl.NumberFormat("fr-FR").format(Math.round(Number(amount) || 0));
+  return new Intl.NumberFormat("fr-FR").format(Math.round(Number(amount) || 0)).replace(/[\u202F\u00A0]/g, " ");
 }
 
 export function formatDate(dateStr) {
   if (!dateStr) return "—";
-  // "2026-07-05" sans fuseau : on ancre à midi pour éviter tout décalage.
+  // Format strict jour/mois/année (JJ/MM/AAAA)
+  const match = String(dateStr).trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (match) {
+    const [, yyyy, mm, dd] = match;
+    return `${dd.padStart(2, "0")}/${mm.padStart(2, "0")}/${yyyy}`;
+  }
   const d = new Date(dateStr.length === 10 ? dateStr + "T12:00:00" : dateStr);
   if (isNaN(d)) return "—";
-  return d.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" });
+  const day = String(d.getDate()).padStart(2, "0");
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const year = d.getFullYear();
+  return `${day}/${month}/${year}`;
 }
 
 export function formatDateLongue(dateStr) {
   if (!dateStr) return "—";
+  // Format étendu jour mois année (ex: 14 octobre 2026)
+  const match = String(dateStr).trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (match) {
+    const [, yyyy, mm, dd] = match;
+    const idx = Number(mm) - 1;
+    const nomMois = MOIS_LONGS[idx] || mm;
+    return `${Number(dd)} ${nomMois} ${yyyy}`;
+  }
   const d = new Date(dateStr.length === 10 ? dateStr + "T12:00:00" : dateStr);
   if (isNaN(d)) return "—";
-  return d.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" });
+  const day = d.getDate();
+  const nomMois = MOIS_LONGS[d.getMonth()] || "";
+  const year = d.getFullYear();
+  return `${day} ${nomMois} ${year}`;
 }
 
 // --- Périodes : "2026-07" <-> "Juillet 2026" ---

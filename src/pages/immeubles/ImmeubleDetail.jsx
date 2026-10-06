@@ -13,6 +13,7 @@ import {
   Building2,
   MapPin,
   Calendar,
+  FileSpreadsheet,
 } from "lucide-react";
 import { useApp } from "../../context/AppContext";
 import { useToast } from "../../context/ToastContext";
@@ -25,8 +26,10 @@ import {
   Modal,
   ConfirmDialog,
   ProgressBar,
+  LocataireLink,
 } from "../../components/ui";
-import { formatMoney, formatDate } from "../../utils/format";
+import { formatMoney, formatDate, periodeCourante } from "../../utils/format";
+import { exporterOperationsExcel } from "../../utils/exportExcel.js";
 
 const STATUTS = {
   actif: { label: "Actif", classe: "badge-green" },
@@ -42,8 +45,15 @@ export default function ImmeubleDetail() {
   const {
     immeublesParId,
     lotsDImmeuble,
+    lotsParId,
+    bauxParId,
     bailActifDuLot,
     locatairesParId,
+    loyersParId,
+    proprietaire,
+    journalPeriode,
+    CATEGORIES,
+    MODES,
     soldesParBail,
     bilanImmeuble,
     removeImmeuble,
@@ -58,6 +68,47 @@ export default function ImmeubleDetail() {
   const [aSupprimerImmeuble, setASupprimerImmeuble] = useState(false);
   const [aSupprimerLot, setASupprimerLot] = useState(null);
   const [erreur, setErreur] = useState(null);
+
+  const telechargerExcelImmeuble = () => {
+    try {
+      const curPeriode = periodeCourante();
+      const j = journalPeriode(curPeriode);
+      const rec = j.recettes
+        .map((p) => {
+          const bail = bauxParId.get(p.bailId);
+          const l = bail ? lotsParId.get(bail.lotId) : null;
+          return {
+            ...p,
+            lot: l,
+            locataire: locatairesParId.get(p.locataireId),
+            immeuble: l ? immeublesParId.get(l.immeubleId) : null,
+          };
+        })
+        .filter((r) => r.immeuble?.id === id)
+        .sort((a, b) => b.date.localeCompare(a.date));
+
+      const dep = j.depenses
+        .map((d) => ({ ...d, immeuble: immeublesParId.get(d.immeubleId) }))
+        .filter((d) => d.immeubleId === id)
+        .sort((a, b) => b.date.localeCompare(a.date));
+
+      const nomFichier = exporterOperationsExcel({
+        periode: curPeriode,
+        immeuble,
+        recettes: rec,
+        depenses: dep,
+        proprietaire,
+        modes: MODES,
+        categories: CATEGORIES,
+        loyersParId,
+      });
+
+      addToast(`Journal Excel téléchargé : ${nomFichier}`);
+    } catch (e) {
+      console.error(e);
+      addToast("Erreur lors de la génération du fichier Excel.", "danger");
+    }
+  };
 
   if (!immeuble) {
     return (
@@ -154,6 +205,14 @@ export default function ImmeubleDetail() {
           </p>
         </div>
         <div className="btn-group">
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={telechargerExcelImmeuble}
+            title="Télécharger les opérations du mois en Excel (.xlsx) pour cet immeuble"
+          >
+            <FileSpreadsheet size={15} /> Exporter Excel
+          </button>
           <Link to={`/immeubles/${id}/modifier`} className="btn btn-secondary">
             <Edit size={15} /> Modifier
           </Link>
@@ -290,9 +349,11 @@ export default function ImmeubleDetail() {
                       </td>
                       <td>
                         {bail && loc ? (
-                          <Link to={`/locataires/${loc.id}`} style={{ fontWeight: 500 }}>
-                            {loc.nom} {loc.prenoms}
-                          </Link>
+                          <LocataireLink
+                            locataire={loc}
+                            avatar
+                            avatarSize={24}
+                          />
                         ) : (
                           <Badge classe="badge-cyan">Vacant</Badge>
                         )}
@@ -350,9 +411,12 @@ export default function ImmeubleDetail() {
                 {impayes.map((x) => (
                   <tr key={x.bail.id}>
                     <td>
-                      <Link to={`/locataires/${x.bail.locataireId}`} style={{ fontWeight: 600 }}>
-                        {x.locataire ? `${x.locataire.nom} ${x.locataire.prenoms}` : "—"}
-                      </Link>
+                      <LocataireLink
+                        locataire={x.locataire}
+                        id={x.bail.locataireId}
+                        avatar
+                        avatarSize={26}
+                      />
                     </td>
                     <td className="text-muted">{x.lot.designation}</td>
                     <td className="num" style={{ color: "var(--danger)", fontWeight: 700 }}>

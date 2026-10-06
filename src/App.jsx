@@ -3,11 +3,12 @@
 // Chaque page est chargée à la demande : le premier rendu ne transporte que
 // le tableau de bord, pas tout le reste.
 
-import { Suspense, lazy } from "react";
+import { Suspense, lazy, useState, useEffect } from "react";
 import { BrowserRouter, Routes, Route, Link } from "react-router-dom";
 import { AppProvider } from "./context/AppContext";
 import { ToastProvider } from "./context/ToastContext";
 import Layout from "./components/Layout";
+import SplashScreen from "./components/SplashScreen";
 import { EmptyState } from "./components/ui";
 import { FileQuestion } from "lucide-react";
 
@@ -59,9 +60,18 @@ function Introuvable() {
 }
 
 export default function App() {
+  const [splashActif, setSplashActif] = useState(true);
+
+  useEffect(() => {
+    const handleReload = () => setSplashActif(true);
+    window.addEventListener("cag:reconnect", handleReload);
+    return () => window.removeEventListener("cag:reconnect", handleReload);
+  }, []);
+
   return (
     <AppProvider>
       <ToastProvider>
+        {splashActif && <SplashScreen onFinish={() => setSplashActif(false)} duration={2850} />}
         <BrowserRouter>
           <Suspense fallback={<Chargement />}>
             <Routes>
