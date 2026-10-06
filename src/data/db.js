@@ -434,19 +434,20 @@ export function enregistrerPaiement(data) {
   const bail = db.baux.find((b) => b.id === data.bailId);
   if (!bail) throw new Error("Bail introuvable");
 
-  const allocations = (data.allocations || []).filter((a) => a.montant > 0);
-  const totalAlloue = allocations.reduce((s, a) => s + a.montant, 0);
   const montant = Math.round(Number(data.montant) || 0);
-  if (montant <= 0) throw new Error("Le montant doit être supérieur à zéro");
-  if (totalAlloue > montant) {
-    throw new Error("Le total alloué dépasse le montant encaissé");
-  }
-  if (montant - totalAlloue > 0) {
-    throw new Error("La totalité du montant doit être allouée à un loyer");
-  }
+  if (!Number.isSafeInteger(montant) || montant <= 0) throw new Error("Le montant doit être un entier supérieur à zéro");
 
-  // Un loyer ne peut pas recevoir plus que ce qui lui reste dû : c'est ce qui
-  // empêche de payer deux fois la même période.
+  const allocations = (data.allocations || []).filter((allocation) => allocation.montant > 0);
+  if (allocations.length === 0) throw new Error("Sélectionnez au moins un mois à régler");
+  if (allocations.some((allocation) => !Number.isSafeInteger(allocation.montant))) {
+    throw new Error("Les montants affectés doivent être des nombres entiers");
+  }
+  if (new Set(allocations.map((allocation) => allocation.loyerId)).size !== allocations.length) {
+    throw new Error("Un mois ne peut être sélectionné qu'une seule fois");
+  }
+  const totalAlloue = allocations.reduce((s, allocation) => s + allocation.montant, 0);
+  if (totalAlloue > montant) throw new Error("Les mois sélectionnés dépassent le montant reçu");
+
   for (const alloc of allocations) {
     const loyer = db.loyers.find((l) => l.id === alloc.loyerId);
     if (!loyer) throw new Error("Loyer introuvable dans l'allocation");
@@ -460,6 +461,44 @@ export function enregistrerPaiement(data) {
         `Montant trop élevé pour ${loyer.periode} : il reste ${reste} FCFA à payer`
       );
     }
+  }
+
+  let avance = montant - totalAlloue;
+  let periode = allocations
+    .map((allocation) => db.loyers.find((loyer) => loyer.id === allocation.loyerId).periode)
+    .sort()
+    .at(-1) || periodeDebutBail(bail);
+  const periodesAvance = [];
+
+  for (let garde = 0; avance > 0 && garde < 600; garde += 1) {
+    periode = periodeDecalee(periode, 1);
+    if (!bailCouvre(bail, periode, Infinity)) {
+      throw new Error("La date de fin du bail ne permet pas d'affecter toute l'avance aux mois suivants");
+    }
+
+    const loyerExistant = db.loyers.find(
+      (loyer) => loyer.bailId === bail.id && loyer.periode === periode
+    );
+    const montantDu = loyerExistant?.montantDu ?? Number(bail.loyerMensuel);
+    const dejaPaye = loyerExistant ? totalAllouePourLoyer(loyerExistant.id) : 0;
+    const reste = montantDu - dejaPaye;
+    if (reste <= 0) continue;
+    if (!Number.isSafeInteger(reste) || reste < 0) throw new Error("Montant du mois suivant invalide");
+
+    const montantAffecte = Math.min(avance, reste);
+    periodesAvance.push({ periode, montant: montantAffecte });
+    avance -= montantAffecte;
+  }
+
+  if (avance > 0) throw new Error("Impossible d'affecter toute l'avance sur la durée restante du bail");
+
+  for (const allocation of periodesAvance) {
+    genererLoyersPourPeriode(allocation.periode, [bail.id], { jusquA: false });
+    const loyer = db.loyers.find(
+      (item) => item.bailId === bail.id && item.periode === allocation.periode
+    );
+    if (!loyer) throw new Error(`Impossible de générer le loyer de ${allocation.periode}`);
+    allocations.push({ loyerId: loyer.id, montant: allocation.montant });
   }
 
   const paiement = {

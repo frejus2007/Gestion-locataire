@@ -12,7 +12,7 @@ import {
   pluriel,
   accorde,
 } from "../utils/format";
-import { Card, EmptyState, Field, Modal, TextInput } from "./ui";
+import { Card, EmptyState, Modal, TextInput } from "./ui";
 import { useToast } from "../context/ToastContext";
 
 const POSTES = [
@@ -47,6 +47,7 @@ export default function CompteLocataire({
   const { addToast } = useToast();
   const [loyerEnEdition, setLoyerEnEdition] = useState(null);
   const [montants, setMontants] = useState(null);
+  const [chargesActives, setChargesActives] = useState(null);
   const [erreurEdition, setErreurEdition] = useState("");
 
   // Solde cumulé, mois après mois : c'est la colonne qui sert à retrouver
@@ -94,7 +95,10 @@ export default function CompteLocataire({
       )
     : 0;
   const totalEnEdition = montants
-    ? POSTES.reduce((total, { id }) => total + (Number(montants[id]) || 0), 0)
+    ? POSTES.reduce((total, { id }) => {
+        if (id !== "loyer" && !chargesActives?.[id]) return total;
+        return total + (Number(montants[id]) || 0);
+      }, 0)
     : 0;
 
   // Les derniers versements, pour la colonne de droite du détail locataire.
@@ -103,16 +107,32 @@ export default function CompteLocataire({
   const ouvrirEdition = (loyer) => {
     setLoyerEnEdition(loyer);
     setMontants(Object.fromEntries(POSTES.map(({ id }) => [id, String(montantPoste(loyer, id))])));
+    setChargesActives(
+      Object.fromEntries(
+        POSTES.filter(({ id }) => id !== "loyer")
+          .map(({ id }) => [id, montantPoste(loyer, id) > 0])
+      )
+    );
     setErreurEdition("");
   };
 
   const enregistrerPostes = () => {
-    const saisieInvalide = POSTES.some(
-      ({ id }) => montants[id] !== "" && !/^\d+$/.test(montants[id])
+    const saisieInvalide = POSTES.some(({ id }) => {
+      if (id !== "loyer" && !chargesActives[id]) return false;
+      return montants[id] === "" || !/^\d+$/.test(montants[id]);
+    });
+    const data = Object.fromEntries(
+      POSTES.map(({ id }) => [
+        id,
+        id !== "loyer" && !chargesActives[id] ? 0 : Number(montants[id]) || 0,
+      ])
     );
-    const data = Object.fromEntries(POSTES.map(({ id }) => [id, Number(montants[id]) || 0]));
     if (saisieInvalide || Object.values(data).some((montant) => !Number.isSafeInteger(montant))) {
-      setErreurEdition("Saisissez des montants entiers positifs ou nuls.");
+      setErreurEdition("Saisissez un montant entier pour le loyer et chaque charge sélectionnée.");
+      return;
+    }
+    if (Object.entries(chargesActives).some(([id, active]) => active && data[id] <= 0)) {
+      setErreurEdition("Une charge sélectionnée doit avoir un montant supérieur à zéro.");
       return;
     }
     const resultat = saveLoyer(loyerEnEdition.id, data);
@@ -140,7 +160,7 @@ export default function CompteLocataire({
         <p className="text-muted" style={{ margin: "0 0 0.85rem", fontSize: "0.84rem" }}>
           Les frais de chaque mois sont additionnés dans « Total dû ». « Payé » indique ce qui a été versé pour le mois ;
           le « Solde cumulé » montre ce qu’il reste à payer depuis le début du bail. Tous les montants sont en FCFA.
-          {!compact && saveLoyer && " Cliquez sur le crayon à côté d’un mois pour modifier ses frais."}
+          {!compact && saveLoyer && " Cliquez sur le crayon d’un mois pour préparer sa facture et choisir les charges à inclure."}
         </p>
         {loyers.length === 0 ? (
           <EmptyState
@@ -215,7 +235,7 @@ export default function CompteLocataire({
 
       {loyerEnEdition && montants && (
         <Modal
-          title={`Frais — ${periodeToLabel(loyerEnEdition.periode)}`}
+          title={`Facture — ${periodeToLabel(loyerEnEdition.periode)}`}
           onClose={() => setLoyerEnEdition(null)}
           width="560px"
           footer={
@@ -230,22 +250,48 @@ export default function CompteLocataire({
           }
         >
           <p className="text-muted" style={{ marginTop: 0 }}>
-            Saisissez les frais applicables pour ce mois. Le total dû est calculé automatiquement.
+            Le loyer est toujours inclus. Cochez uniquement les charges applicables à cette facture,
+            puis saisissez leur montant. Le total dû est calculé automatiquement.
           </p>
           <div className="form-grid">
-            {POSTES.map(({ id, label }) => (
-              <Field key={id} label={`${label} (FCFA)`} htmlFor={`frais-${id}`}>
-                <TextInput
-                  id={`frais-${id}`}
-                  type="text"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  value={montants[id]}
-                  onFocus={(e) => e.target.select()}
-                  onChange={(e) => setMontants((actuels) => ({ ...actuels, [id]: e.target.value }))}
-                />
-              </Field>
-            ))}
+            {POSTES.map(({ id, label }) => {
+              const estLoyer = id === "loyer";
+              const actif = estLoyer || chargesActives[id];
+              return (
+                <div key={id} className="form-group">
+                  {!estLoyer && (
+                    <label style={{ display: "flex", alignItems: "center", gap: "0.45rem", marginBottom: "0.45rem" }}>
+                      <input
+                        type="checkbox"
+                        checked={chargesActives[id]}
+                        onChange={(event) => {
+                          const active = event.target.checked;
+                          setChargesActives((actuelles) => ({ ...actuelles, [id]: active }));
+                          if (active && !montants[id]) {
+                            setMontants((actuels) => ({ ...actuels, [id]: "0" }));
+                          }
+                        }}
+                      />
+                      Inclure {label.toLowerCase()}
+                    </label>
+                  )}
+                  {actif && (
+                    <>
+                      <label htmlFor={`frais-${id}`}>{label} (FCFA){estLoyer && " *"}</label>
+                      <TextInput
+                        id={`frais-${id}`}
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        value={montants[id]}
+                        onFocus={(e) => e.target.select()}
+                        onChange={(e) => setMontants((actuels) => ({ ...actuels, [id]: e.target.value }))}
+                      />
+                    </>
+                  )}
+                </div>
+              );
+            })}
           </div>
           <p style={{ margin: "0.75rem 0 0", fontWeight: 600 }}>
             Total : {formatMoney(totalEnEdition)}

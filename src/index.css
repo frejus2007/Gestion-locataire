@@ -3569,3 +3569,141 @@ a.entity-title:hover {
     padding: 1.25rem;
   }
 }
+
+@page {
+  size: A4 portrait;
+  margin: 0;
+}
+
+@media print {
+  html,
+  body,
+  #root {
+    width: 210mm;
+    min-height: 297mm;
+    height: auto;
+    margin: 0;
+    padding: 0;
+    overflow: visible;
+  }
+
+  body {
+    background: #fff;
+    color: #111827;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .sidebar,
+  .topbar,
+  .bottom-nav,
+  .no-print {
+    display: none !important;
+  }
+
+  .layout {
+    display: block;
+    min-height: 0;
+  }
+
+  .page-transition-wrapper {
+    animation: none !important;
+    transform: none !important;
+    opacity: 1 !important;
+  }
+
+  .main-content {
+    width: 210mm;
+    min-width: 0;
+    max-width: none;
+    margin: 0;
+    padding: 0;
+    animation: none;
+  }
+
+  .receipt {
+    display: flex;
+    flex-direction: column;
+    width: 210mm;
+    min-height: 297mm;
+    max-width: none;
+    margin: 0;
+    padding: 20mm;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    font-size: 11pt;
+  }
+
+  .receipt-header,
+  .receipt-footer {
+    flex-direction: row;
+  }
+
+  .receipt-header {
+    align-items: flex-start;
+  }
+
+  .receipt-header {
+    justify-content: space-between;
+    gap: 12mm;
+  }
+
+  .receipt-owner {
+    font-size: 10pt;
+    line-height: 1.65;
+  }
+
+  .receipt-meta {
+    flex: 0 0 auto;
+    text-align: right;
+  }
+
+  .receipt-meta img {
+    height: 15mm !important;
+    width: auto;
+    object-fit: contain;
+  }
+
+  .receipt-title {
+    font-size: 16pt;
+  }
+
+  .receipt-ref {
+    font-size: 10pt;
+  }
+
+  .receipt-divider {
+    margin: 8mm 0;
+  }
+
+  .receipt-body p {
+    font-size: 11pt;
+    line-height: 1.8;
+    margin-bottom: 6mm;
+  }
+
+  .receipt-periods {
+    font-size: 10.5pt;
+  }
+
+  .receipt-footer {
+    justify-content: space-between;
+    gap: 12mm;
+    margin-top: auto;
+    padding-top: 20mm;
+  }
+
+  .signature-space {
+    min-width: 65mm;
+    min-height: 25mm;
+  }
+
+  .signature-img {
+    max-height: 25mm;
+  }
+
+  .barcode {
+    height: 14mm;
+  }
+}

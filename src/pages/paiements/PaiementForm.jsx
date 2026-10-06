@@ -1,8 +1,7 @@
 // Encaissement d'un versement.
 //
-// Le propriétaire indique un montant et la date ; l'application le répartit sur
-// les périodes impayées, de la plus ancienne à la plus récente. C'est ce
-// pré-remplissage qui remplace le plus de paperasse, alors il doit être exact.
+// Le propriétaire choisit les mois à régler ; le surplus est affecté aux mois
+// suivants du bail et génère automatiquement les périodes nécessaires.
 
 import { useState, useMemo } from "react";
 import { useParams, useNavigate, Link, useSearchParams } from "react-router-dom";
@@ -11,7 +10,7 @@ import { useApp } from "../../context/AppContext";
 import { useToast } from "../../context/ToastContext";
 import AllocationLoyers from "../../components/AllocationLoyers";
 import { Card, Field, TextInput, Select, ErrorBanner, EmptyState, Badge, Avatar } from "../../components/ui";
-import { formatMoney, formatDate, periodeToLabel, pluriel } from "../../utils/format";
+import { formatMoney, formatDate, periodeToLabel, periodeDecalee, pluriel } from "../../utils/format";
 import { MOIS_DE_PAYEMENT } from "../../data/db";
 
 const AUJOURDHUI = new Date().toISOString().slice(0, 10);
@@ -31,6 +30,7 @@ export default function PaiementForm() {
     bailEstActif,
     impayesDe,
     resteDuLoyer,
+    loyers,
     soldesParBail,
     enregistrerPaiement,
     genererQuittance,
@@ -61,15 +61,22 @@ export default function PaiementForm() {
     mode: "especes",
     reference: "",
     note: "",
-    // Si l'on arrive depuis la fiche d'un locataire, son montant dû est proposé.
     montant: (() => {
       const b = bauxParId.get(bailId);
       if (!b) return "";
-      const d = soldesParBail.get(bailId) || 0;
-      return d > 0 ? String(d) : "";
+      const premier = impayesDe(bailId).find((loyer) => resteDuLoyer(loyer.id) > 0);
+      return premier ? String(resteDuLoyer(premier.id)) : "";
     })(),
   }));
-  const [allocations, setAllocations] = useState([]);
+  const [allocations, setAllocations] = useState(() => {
+    const bailInitial = bauxParId.get(bailId);
+    const premierImpaye = bailInitial
+      ? impayesDe(bailInitial.id).find((loyer) => resteDuLoyer(loyer.id) > 0)
+      : null;
+    return premierImpaye
+      ? [{ loyerId: premierImpaye.id, montant: resteDuLoyer(premierImpaye.id) }]
+      : [];
+  });
   const [erreurs, setErreurs] = useState({});
   const [erreurGlobale, setErreurGlobale] = useState(null);
 
@@ -79,26 +86,53 @@ export default function PaiementForm() {
     [impayesDe, bailId]
   );
 
-  const detteTotale = bailId ? soldesParBail.get(bailId) || 0 : 0;
-
-  const set = (champ) => (e) => setForm((f) => ({ ...f, [champ]: e.target.value }));
-
   const montant = Number(form.montant) || 0;
+  const detteTotale = bailId ? soldesParBail.get(bailId) || 0 : 0;
+  const sommeDesSoldes = impayes.reduce((total, loyer) => total + resteDuLoyer(loyer.id), 0);
   const totalAlloue = allocations.reduce((s, a) => s + a.montant, 0);
-  const ecart = montant - totalAlloue;
+  const avance = Math.max(0, montant - totalAlloue);
+  const repartitionValide = allocations.length > 0 && totalAlloue <= montant;
+  const apercuAvance = useMemo(() => {
+    if (!bail || avance <= 0) return { periodes: [], nonAffecte: 0 };
+    const periodesSelectionnees = allocations
+      .map((allocation) => loyers.find((loyer) => loyer.id === allocation.loyerId)?.periode)
+      .filter(Boolean)
+      .sort();
+    let periode = periodesSelectionnees.at(-1) || bail.dateDebut.slice(0, 7);
+    let restant = avance;
+    const futures = [];
 
-  // Tant que le montant est entièrement réparti, on ne parle pas d'erreur.
-  const repartitionComplete = montant > 0 && Math.abs(ecart) < 1;
+    for (let garde = 0; restant > 0 && garde < 600; garde += 1) {
+      periode = periodeDecalee(periode, 1);
+      if (bail.dateFin && periode > bail.dateFin.slice(0, 7)) break;
 
-  // Changer de locataire réinitialise la répartition et propose le montant de
-  // la dette : c'est le cas le plus fréquent, autant que ce soit automatique.
+      const loyerExistant = loyers.find(
+        (loyer) => loyer.bailId === bail.id && loyer.periode === periode
+      );
+      const reste = loyerExistant ? resteDuLoyer(loyerExistant.id) : bail.loyerMensuel;
+      if (reste <= 0) continue;
+      const montantAffecte = Math.min(restant, reste);
+      futures.push({ periode, montant: montantAffecte, aGenerer: !loyerExistant });
+      restant -= montantAffecte;
+    }
+    return { periodes: futures, nonAffecte: restant };
+  }, [bail, allocations, avance, loyers, resteDuLoyer]);
+
+  const set = (champ) => (e) => {
+    const valeur = e.target.value;
+    setForm((f) => ({ ...f, [champ]: valeur }));
+  };
+
   const changerBail = (e) => {
     const nouveauBail = e.target.value;
     setBailId(nouveauBail);
     setErreurGlobale(null);
-    setAllocations([]);
-    const dette = nouveauBail ? soldesParBail.get(nouveauBail) || 0 : 0;
-    setForm((f) => ({ ...f, montant: dette > 0 ? String(dette) : "" }));
+    const premier = nouveauBail
+      ? impayesDe(nouveauBail).find((loyer) => resteDuLoyer(loyer.id) > 0)
+      : null;
+    const restePremier = premier ? resteDuLoyer(premier.id) : 0;
+    setAllocations(premier ? [{ loyerId: premier.id, montant: restePremier }] : []);
+    setForm((f) => ({ ...f, montant: restePremier > 0 ? String(restePremier) : "" }));
     setErreurs((x) => ({ ...x, bailId: undefined, montant: undefined }));
   };
 
@@ -106,8 +140,10 @@ export default function PaiementForm() {
     const e = {};
     if (!bailId) e.bailId = "Choisissez le locataire";
     if (!form.date) e.date = "La date est requise";
-    if (montant <= 0) e.montant = "Le montant doit être supérieur à zéro";
-    else if (!repartitionComplete) e.montant = "Répartissez la totalité du montant sur les périodes";
+    if (!Number.isSafeInteger(montant) || montant <= 0) e.montant = "Saisissez un montant entier supérieur à zéro";
+    else if (allocations.length === 0) e.montant = "Sélectionnez au moins un mois à régler";
+    else if (totalAlloue > montant) e.montant = "Les montants des mois sélectionnés dépassent le montant reçu";
+    else if (apercuAvance.nonAffecte > 0) e.montant = "L’avance dépasse la durée restante du bail";
     if (form.mode === "virement" && !form.reference.trim()) {
       e.reference = "Indiquez la référence du virement";
     }
@@ -172,7 +208,7 @@ export default function PaiementForm() {
           </Link>
           <h1 className="page-title">Encaisser un versement</h1>
           <p className="page-subtitle">
-            Répartissez le montant reçu sur les périodes impayées, puis la quittance est générée.
+            Choisissez les mois à régler et indiquez le montant reçu. Toute avance sera affectée aux mois suivants.
           </p>
         </div>
       </div>
@@ -214,7 +250,7 @@ export default function PaiementForm() {
                   label="Montant reçu"
                   required
                   error={erreurs.montant}
-                  hint={bail && detteTotale > 0 ? `Dette totale : ${formatMoney(detteTotale)}` : "Montant en FCFA"}
+                  hint={bail && sommeDesSoldes > 0 ? `Total restant dû : ${formatMoney(sommeDesSoldes)}` : "Montant en FCFA"}
                   className="span-2"
                 >
                   <TextInput
@@ -254,7 +290,17 @@ export default function PaiementForm() {
                 <Link to={locataireIdUrl ? `/locataires/${locataireIdUrl}` : "/paiements"} className="btn btn-secondary">
                   Annuler
                 </Link>
-                <button type="submit" className="btn btn-primary" disabled={!bailId || montant <= 0}>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={
+                    !bailId
+                    || !Number.isSafeInteger(montant)
+                    || montant <= 0
+                    || !repartitionValide
+                    || apercuAvance.nonAffecte > 0
+                  }
+                >
                   <Save size={16} /> Enregistrer et générer la quittance
                 </button>
               </div>
@@ -262,14 +308,16 @@ export default function PaiementForm() {
           </Card>
 
           {bail && (
-            <Card title="Répartition sur les périodes impayées">
-              <AllocationLoyers
-                impayes={impayes}
-                montant={montant}
-                onChange={setAllocations}
-                resteDuLoyer={resteDuLoyer}
-              />
-            </Card>
+            impayes.length > 0 && (
+              <Card title="Mois à régler">
+                  <AllocationLoyers
+                    impayes={impayes}
+                    allocations={allocations}
+                    onChange={setAllocations}
+                    resteDuLoyer={resteDuLoyer}
+                  />
+              </Card>
+            )
           )}
         </div>
 
@@ -328,7 +376,7 @@ export default function PaiementForm() {
                   <strong>{formatMoney(montant)}</strong>
                 </div>
                 <div className="row" style={{ justifyContent: "space-between" }}>
-                  <span className="text-muted">Réparti sur</span>
+                  <span className="text-muted">Mois sélectionnés</span>
                   <strong>{pluriel(allocations.length, "période")}</strong>
                 </div>
 
@@ -348,26 +396,48 @@ export default function PaiementForm() {
                   </div>
                 )}
 
-                {montant > 0 && !repartitionComplete && (
-                  <div className="alert alert-warn" style={{ marginBottom: 0, marginTop: "0.3rem" }}>
-                    <Info size={14} style={{ verticalAlign: -2, marginRight: 5 }} />
-                    Il reste {formatMoney(Math.abs(ecart))} à{" "}
-                    {ecart > 0 ? "répartir" : "retirer de la répartition"}.
+                {avance > 0 && (
+                  <div style={{ borderTop: "1px solid var(--border-light)", paddingTop: "0.6rem" }}>
+                    <div className="row" style={{ justifyContent: "space-between", fontSize: "0.85rem", padding: "0.15rem 0" }}>
+                      <span className="text-muted">Avance sur les mois suivants</span>
+                      <strong>{formatMoney(avance)}</strong>
+                    </div>
+                    {apercuAvance.periodes.map(({ periode, montant: montantFuture, aGenerer }) => (
+                      <div key={periode} className="row" style={{ justifyContent: "space-between", fontSize: "0.85rem", padding: "0.15rem 0" }}>
+                        <span className="text-muted">
+                          {periodeToLabel(periode)}{aGenerer ? " (à créer)" : ""}
+                        </span>
+                        <span>{formatMoney(montantFuture)}</span>
+                      </div>
+                    ))}
                   </div>
                 )}
 
-                {repartitionComplete && (
+                {montant > 0 && totalAlloue > montant && (
+                  <div className="alert alert-warn" style={{ marginBottom: 0, marginTop: "0.3rem" }}>
+                    <Info size={14} style={{ verticalAlign: -2, marginRight: 5 }} />
+                    Les montants affectés dépassent le montant reçu de {formatMoney(totalAlloue - montant)}.
+                  </div>
+                )}
+
+                {repartitionValide && apercuAvance.nonAffecte === 0 && (
                   <div className="alert alert-info" style={{ marginBottom: 0 }}>
                     <CheckCircle2 size={14} style={{ verticalAlign: -2, marginRight: 5 }} />
-                    Répartition complète. La quittance sera générée automatiquement.
+                    Les montants sont répartis. La quittance sera générée automatiquement.
+                  </div>
+                )}
+
+                {apercuAvance.nonAffecte > 0 && (
+                  <div className="alert alert-warn" style={{ marginBottom: 0 }}>
+                    <AlertTriangle size={14} style={{ verticalAlign: -2, marginRight: 5 }} />
+                    Le bail ne couvre pas tous les mois nécessaires pour affecter l’avance. Il reste {formatMoney(apercuAvance.nonAffecte)}.
                   </div>
                 )}
 
                 {impayes.length === 0 && bail && (
                   <div className="alert alert-warn" style={{ marginBottom: 0 }}>
                     <AlertTriangle size={14} style={{ verticalAlign: -2, marginRight: 5 }} />
-                    Ce locataire est à jour : il n'a aucun loyer impayé. Générez d'abord les loyers
-                    de la période en cours.
+                    Ce locataire n’a aucun mois impayé à sélectionner.
                   </div>
                 )}
 
