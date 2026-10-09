@@ -1,0 +1,602 @@
+/* =========================================================
+   Habillage CAGOUNOU — pages Locataires, Paiements & Quittances,
+   Compte et Paramètres.
+
+   Tout passe par les variables de thème (index.css) : le mode
+   sombre et le mode clair fonctionnent donc sans code en plus.
+
+   Sommaire
+   1. En-tête de page
+   2. Cartes statistiques
+   3. Tableaux
+   4. Pastilles et étiquettes
+   5. Détail des sept lignes
+   6. Numéros de réception
+   7. Bloc caution
+   8. Relevé mensuel
+   ========================================================= */
+
+/* ---------- Bouton « encaisser » (vert) ---------- */
+.btn-success {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  background: var(--success);
+  border: 1px solid var(--success);
+  color: #fff;
+  font-weight: 600;
+}
+.btn-success:hover:not(:disabled) { background: var(--success-dark); border-color: var(--success-dark); }
+
+/* ---------- 1. En-tête de page ---------- */
+.cag-page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+  padding-bottom: 1.1rem;
+  border-bottom: 1px solid var(--border);
+}
+.cag-page-head h1 {
+  font-size: 1.6rem;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  margin: 0;
+  color: var(--text);
+}
+.cag-page-head p {
+  margin: 0.3rem 0 0;
+  font-size: 0.95rem;
+  color: var(--text-muted);
+}
+.cag-page-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+/* ---------- 2. Cartes statistiques ---------- */
+.cag-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+.cag-stat {
+  position: relative;
+  overflow: hidden;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.1rem 1.2rem;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+  transition: transform 0.16s ease, box-shadow 0.16s ease;
+}
+.cag-stat::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--primary), var(--primary-hover));
+  opacity: 0;
+  transition: opacity 0.16s ease;
+}
+.cag-stat:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 22px -12px rgba(15, 23, 42, 0.28);
+}
+.cag-stat:hover::before {
+  opacity: 1;
+}
+.cag-stat-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.cag-stat-label svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+.cag-stat-value {
+  margin-top: 0.4rem;
+  font-size: 1.55rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+.cag-stat-hint {
+  margin-top: 0.35rem;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+.cag-stat.ok .cag-stat-hint { color: var(--success); }
+.cag-stat.warn { background: var(--warning-light); border-color: var(--warning-border); }
+.cag-stat.warn .cag-stat-hint { color: var(--warning); }
+.cag-stat.ok { background: var(--success-light); border-color: var(--success-border); }
+.cag-stat.danger { background: var(--danger-light); border-color: var(--danger-border); }
+.cag-stat.danger .cag-stat-hint { color: var(--danger); }
+
+/* ---------- 3. Tableaux ---------- */
+.cag-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card-bg);
+}
+table.cag-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.87rem;
+}
+table.cag-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-align: left;
+  padding: 0.7rem 0.85rem;
+  background: var(--bg-subtle);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+table.cag-table tbody td {
+  padding: 0.8rem 0.85rem;
+  border-bottom: 1px solid var(--border-light);
+  vertical-align: middle;
+}
+table.cag-table tbody tr:last-child td { border-bottom: 0; }
+table.cag-table tbody tr { transition: background 0.12s ease; }
+table.cag-table tbody tr:hover td { background: var(--primary-bg); }
+table.cag-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+table.cag-table .actions {
+  text-align: right;
+  white-space: nowrap;
+}
+table.cag-table .actions .btn + .btn { margin-left: 0.35rem; }
+table.cag-table tfoot td {
+  padding: 0.8rem 0.85rem;
+  background: var(--primary-bg);
+  border-top: 2px solid var(--border);
+  font-weight: 700;
+  color: var(--text);
+}
+.cag-strong { font-weight: 700; color: var(--text); }
+.cag-muted { color: var(--text-muted); }
+.cag-sub {
+  margin-top: 0.15rem;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+
+/* ---------- 4. Pastilles et étiquettes ---------- */
+.cag-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.18rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.cag-pill.info { background: var(--primary-light); color: var(--primary); }
+.cag-pill.warn { background: var(--warning-light); color: var(--warning-dark); }
+.cag-pill.ok { background: var(--success-light); color: var(--success-dark); }
+.cag-pill.danger { background: var(--danger-light); color: var(--danger); }
+.cag-pill.money { background: var(--danger-light); color: var(--danger); }
+.cag-pill.credit { background: var(--success-light); color: var(--success-dark); }
+
+/* ---------- 5. Détail des sept lignes ---------- */
+.cag-lignes {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--card-bg);
+}
+.cag-ligne {
+  display: grid;
+  grid-template-columns: 1fr 150px;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.55rem 0.9rem;
+  border-bottom: 1px solid var(--border-light);
+}
+.cag-ligne:last-child { border-bottom: 0; }
+.cag-ligne.loyer { background: var(--primary-bg); }
+.cag-ligne-label {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  min-width: 0;
+}
+.cag-ligne input[type="text"].libelle {
+  display: block;
+  width: 100%;
+  margin-bottom: 0.2rem;
+  padding: 0.22rem 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--primary);
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+}
+.cag-ligne input.montant {
+  text-align: right;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+/* Loyer : montant figé par le bail, il se lit mais ne se saisit pas. */
+.cag-ligne input.montant-fixe {
+  background: var(--bg);
+  color: var(--text);
+  border-style: dashed;
+  cursor: default;
+}
+.cag-reste {
+  margin: 0 0 0.9rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+.cag-reste strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+/* Annonce le refus avant le clic : mieux vaut le voir que le découvrir. */
+.cag-refus {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  margin: 0.7rem 0 0;
+  padding: 0.7rem 0.85rem;
+  border-radius: var(--radius);
+  background: var(--danger-light);
+  border: 1px solid var(--danger-border);
+  color: var(--danger-dark);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+.cag-refus svg { flex: none; margin-top: 1px; }
+.cag-total {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 1rem;
+  padding: 1rem 1.1rem;
+  border-radius: var(--radius);
+  background: linear-gradient(135deg, var(--success), var(--success-dark));
+  color: #fff;
+  box-shadow: 0 10px 22px -14px rgba(5, 150, 105, 0.9);
+}
+.cag-total span { font-size: 0.82rem; font-weight: 600; }
+.cag-total strong {
+  font-size: 1.4rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.cag-total-periode {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin-top: 0.5rem;
+  padding: 0.6rem 0.9rem;
+  border-radius: var(--radius-sm);
+  background: var(--primary-bg);
+  border: 1px solid var(--primary-border);
+  color: var(--primary);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.cag-total-periode strong { font-size: 0.95rem; font-variant-numeric: tabular-nums; }
+
+/* ---------- Sélection des mois à régler ---------- */
+.cag-mois {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 0.45rem;
+  max-height: 210px;
+  overflow-y: auto;
+  padding-right: 0.2rem;
+}
+.cag-mois-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card-bg);
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: border-color 0.14s ease, background 0.14s ease;
+}
+.cag-mois-item:hover { border-color: var(--primary-border); }
+.cag-mois-item.actif {
+  border-color: var(--primary);
+  background: var(--primary-bg);
+}
+.cag-mois-item.regle { opacity: 0.55; cursor: not-allowed; }
+.cag-mois-item input[type="checkbox"] {
+  flex: none;
+  width: auto;
+  margin: 0;
+  accent-color: var(--primary);
+}
+.cag-mois-periode { flex: 1; min-width: 0; font-weight: 600; color: var(--text); }
+.cag-mois-montant {
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* ---------- Sous-titre de section dans les formulaires ---------- */
+.cag-soustitre {
+  margin: 0 0 0.55rem;
+  padding: 0.45rem 0.75rem;
+  border-radius: var(--radius-sm);
+  background: var(--primary-bg);
+  border: 1px solid var(--primary-border);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--primary);
+}
+
+/* ---------- Avertissement de bas de formulaire ---------- */
+.cag-avertissement {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 1rem 0 0;
+  padding: 0.65rem 0.8rem;
+  border-radius: var(--radius-sm);
+  background: var(--info-light);
+  border: 1px solid var(--info-border);
+  color: var(--info-dark);
+  font-size: 0.8rem;
+}
+.cag-avertissement svg { flex: none; margin-top: 1px; }
+
+/* ---------- 6. Numéros de réception ---------- */
+.cag-reception {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin-bottom: 0.7rem;
+}
+.cag-reception-row {
+  display: grid;
+  grid-template-columns: 190px 1fr auto;
+  gap: 0.55rem;
+  align-items: center;
+}
+
+/* ---------- 7. Bloc caution ---------- */
+.cag-caution {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.8rem;
+  padding: 0.9rem 1rem;
+  border-radius: var(--radius);
+  background: var(--info-light);
+  border: 1px solid var(--info-border);
+  color: var(--info-dark);
+  font-size: 0.85rem;
+}
+.cag-caution svg { flex: none; width: 18px; height: 18px; margin-top: 1px; }
+
+/* ---------- 8. Relevé mensuel ---------- */
+table.cag-releve { font-size: 0.8rem; }
+table.cag-releve thead th { white-space: normal; line-height: 1.25; min-width: 62px; }
+table.cag-releve thead th.grand { min-width: 96px; }
+table.cag-releve tbody td { white-space: nowrap; padding: 0.6rem 0.7rem; }
+table.cag-releve td.vide { color: var(--text-muted); }
+table.cag-releve tr.attention td { background: var(--warning-light); }
+table.cag-releve tr.caution td { background: var(--primary-bg); }
+
+/* ---------- 0 bis. Écran de connexion ---------- */
+.login-split {
+  display: grid;
+  grid-template-columns: 1.05fr 0.95fr;
+  min-height: 100vh;
+  background: var(--bg);
+}
+.login-aside-cag {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 3rem 3.5rem;
+  color: #fff;
+  background:
+    radial-gradient(60rem 40rem at 10% -10%, rgba(59, 130, 246, 0.5), transparent 60%),
+    linear-gradient(155deg, #06172b 0%, #0f2f57 55%, #014185 200%);
+}
+.login-aside-cag::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.045) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(circle at 30% 30%, #000, transparent 78%);
+  pointer-events: none;
+}
+.login-aside-cag > * { position: relative; z-index: 1; }
+.login-marque { display: flex; flex-direction: column; gap: 0.7rem; }
+.login-logo-cag {
+  width: min(300px, 58vw);
+  filter: brightness(0) invert(1);
+}
+.login-legende {
+  font-size: 0.68rem;
+  letter-spacing: 0.16em;
+  font-weight: 700;
+  color: #9db8dd;
+}
+.login-pitch-cag h1 {
+  font-size: clamp(1.9rem, 3vw, 2.4rem);
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+  margin: 0 0 1rem;
+  max-width: 18ch;
+  color: #ffffff;
+}
+.login-pitch-cag > p { margin: 0; color: #bcd3ee; max-width: 44ch; font-size: 0.95rem; }
+.login-arguments {
+  list-style: none;
+  margin: 2rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.8rem;
+}
+.login-arguments li {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  font-size: 0.9rem;
+  color: #d6e6fa;
+}
+.login-tick {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #93c5fd;
+}
+.login-pied { margin: 0; font-size: 0.76rem; color: #7f9dc6; }
+
+.login-main-cag { display: grid; place-items: center; padding: 2.5rem 1.75rem; }
+.login-card-cag {
+  width: 100%;
+  max-width: 24rem;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 2.1rem 2.1rem 1.7rem;
+  box-shadow: 0 24px 56px -12px rgba(15, 23, 42, 0.28);
+}
+.login-surtitre {
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--primary);
+}
+.login-card-cag h2 {
+  margin: 0.5rem 0 0.35rem;
+  font-size: 1.5rem;
+  letter-spacing: -0.025em;
+  color: var(--text);
+}
+.login-sous-titre { margin: 0 0 1.6rem; color: var(--text-muted); font-size: 0.86rem; }
+.login-champ { display: block; margin-bottom: 1rem; font-size: 0.8rem; font-weight: 600; color: var(--text-secondary); }
+.login-champ > span { display: block; margin-bottom: 0.4rem; }
+.login-champ input {
+  width: 100%;
+  padding: 0.72rem 0.85rem;
+  font-size: 0.92rem;
+  font-weight: 400;
+  color: var(--text);
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-field);
+}
+.login-champ input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 4px var(--primary-ring);
+}
+.login-champ-mdp { position: relative; display: flex; align-items: center; }
+.login-champ-mdp button {
+  position: absolute;
+  right: 0.35rem;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+}
+.login-champ-mdp button:hover { color: var(--text); background: var(--bg-subtle); }
+.login-erreur {
+  margin-bottom: 0.9rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: var(--radius-sm);
+  background: var(--danger-light);
+  border: 1px solid var(--danger-border);
+  color: var(--danger);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+.login-bouton { width: 100%; padding: 0.8rem 1rem; font-size: 0.95rem; }
+.login-bouton:disabled { opacity: 0.7; cursor: progress; }
+.login-aide {
+  margin: 1.2rem 0 0;
+  text-align: center;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+.login-aide code {
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  background: var(--bg-subtle);
+  font-size: 0.72rem;
+}
+
+@media (max-width: 900px) {
+  .login-split { grid-template-columns: 1fr; }
+  .login-aside-cag { display: none; }
+}
+
+/* ---------- Adaptation petit écran ---------- */
+@media (max-width: 700px) {
+  .cag-page-head h1 { font-size: 1.3rem; }
+  .cag-stats { grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 0.7rem; }
+  .cag-stat { padding: 0.8rem 0.9rem; border-radius: var(--radius-sm); }
+  .cag-stat-value { font-size: 1.25rem; }
+  .cag-ligne { grid-template-columns: 1fr 110px; padding: 0.5rem 0.7rem; }
+  .cag-total { padding: 0.85rem 1rem; }
+  .cag-total strong { font-size: 1.2rem; }
+  .cag-reception-row {
+    grid-template-columns: 1fr;
+    gap: 0.4rem;
+    padding: 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-subtle);
+  }
+  .cag-reception-row .btn { justify-self: end; }
+}

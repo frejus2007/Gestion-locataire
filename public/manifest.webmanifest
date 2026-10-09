@@ -1,0 +1,58 @@
+{
+  "name": "CAG — Gestion locative",
+  "short_name": "CAG",
+  "description": "Gestion locative : locataires, loyers, versements et quittances.",
+  "lang": "fr",
+  "dir": "ltr",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "orientation": "portrait-primary",
+  "background_color": "#071426",
+  "theme_color": "#0152BD",
+  "categories": ["business", "productivity", "finance"],
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Encaisser un versement",
+      "short_name": "Encaisser",
+      "description": "Enregistrer un nouveau versement",
+      "url": "/paiements/nouveau",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Locataires",
+      "short_name": "Locataires",
+      "description": "Consulter la liste des locataires",
+      "url": "/locataires",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Journal mensuel",
+      "short_name": "Journal",
+      "description": "Voir les encaissements du mois",
+      "url": "/journal",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}
