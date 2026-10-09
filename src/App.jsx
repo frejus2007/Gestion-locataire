@@ -84,9 +84,12 @@ export default function App() {
   }, []);
 
   return (
-    <AppProvider>
-      <ToastProvider>
-        <AuthProvider>
+    <ToastProvider>
+      <AuthProvider>
+        {/* AppProvider lit la session pour savoir quand charger : il doit être
+            à l'intérieur d'AuthProvider, sinon useAuth ne trouve pas son
+            contexte. */}
+        <AppProvider>
           {splashActif && (
             <SplashScreen
               duration={1800}
@@ -137,10 +140,10 @@ export default function App() {
                 </Route>
               </Routes>
             </Suspense>
-          </BrowserRouter>
-        )}
-        </AuthProvider>
-      </ToastProvider>
-    </AppProvider>
+            </BrowserRouter>
+          )}
+        </AppProvider>
+      </AuthProvider>
+    </ToastProvider>
   );
 }

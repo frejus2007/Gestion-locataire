@@ -451,7 +451,10 @@ table.cag-releve tr.caution td { background: var(--primary-bg); }
 .login-marque { display: flex; flex-direction: column; gap: 0.7rem; }
 .login-logo-cag {
   width: min(300px, 58vw);
-  filter: brightness(0) invert(1);
+  height: auto;
+  /* Le fichier est déjà blanc sur fond transparent : le panneau de gauche est
+     sombre, un filtre serait redondant et destructeur. */
+  filter: drop-shadow(0 2px 10px rgba(0, 0, 0, 0.28));
 }
 .login-legende {
   font-size: 0.68rem;

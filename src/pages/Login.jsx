@@ -3,7 +3,7 @@
 // Le logo CAGOUNOU et le rappel du cabinet structurent la page ; le formulaire
 // ne demande qu'un identifiant et un mot de passe.
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Check, Eye, EyeOff, Home, Receipt, ShieldAlert } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
@@ -15,7 +15,7 @@ const ARGUMENTS = [
 ];
 
 export default function Login() {
-  const { login } = useAuth();
+  const { login, isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -24,6 +24,21 @@ export default function Login() {
   const [erreur, setErreur] = useState("");
   const [chargement, setChargement] = useState(false);
   const [visible, setVisible] = useState(false);
+  const [connexionAcceptee, setConnexionAcceptee] = useState(false);
+
+  /**
+   * `signInWithEmailAndPassword` confirme les identifiants avant que la session
+   * ne soit posée par `onAuthStateChanged`. Naviguer sur cette confirmation
+   * arrivait donc en avance : la garde de route voyait encore un visiteur
+   * anonyme et le renvoyait à l'écran de connexion, où l'on restait bloqué même
+   * une fois la session valide. On attend l'un ET l'autre.
+   */
+  useEffect(() => {
+    if (connexionAcceptee && isAuthenticated) {
+      const retour = location.state?.from?.pathname || "/";
+      navigate(retour, { replace: true });
+    }
+  }, [connexionAcceptee, isAuthenticated, navigate, location.state]);
 
   const soumettre = async (e) => {
     e.preventDefault();
@@ -32,8 +47,7 @@ export default function Login() {
     const res = await login(email, motDePasse);
     setChargement(false);
     if (res.ok) {
-      const retour = location.state?.from?.pathname || "/";
-      navigate(retour, { replace: true });
+      setConnexionAcceptee(true);
     } else {
       setErreur(res.error || "Connexion impossible");
     }
@@ -47,7 +61,7 @@ export default function Login() {
         <div className="login-marque">
           {/* Le logo complet porte déjà « Chabi Arnaud GOUNOU / GESTION
               LOCATIVE » : aucune légende ne le répète en dessous. */}
-          <img src="/logo-cag-complet.png" alt="CAGOUNOU" className="login-logo-cag" />
+          <img src="/logo-cag-login.png" alt="CAGOUNOU" className="login-logo-cag" />
         </div>
 
         <div className="login-pitch-cag">

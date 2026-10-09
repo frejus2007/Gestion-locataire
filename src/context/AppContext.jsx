@@ -9,6 +9,7 @@
 
 import { createContext, useContext, useState, useCallback, useMemo, useEffect } from "react";
 import * as db from "../data/db.firebase";
+import { useAuth } from "./AuthContext";
 import { comparePeriode, periodeCourante } from "../utils/format";
 
 const { CATEGORIES_DEPENSE, MOIS_DE_PAYEMENT, LIGNES_FRAIS } = db;
@@ -28,6 +29,7 @@ const VIDE = {
 };
 
 export function AppProvider({ children }) {
+  const { isAuthenticated } = useAuth();
   const [donnees, setDonnees] = useState(VIDE);
   const [loading, setLoading] = useState(true);
   const [erreur, setErreur] = useState(null);
@@ -68,9 +70,19 @@ export function AppProvider({ children }) {
     }
   }, []);
 
+  // Les règles Firestore n'autorisent que l'utilisateur connecté. Charger au
+  // montage seul serait donc une faute : la lecture partirait avant la session
+  // et tous les appels seraient refusés, sans qu'aucun rechargement ne
+  // rattrape l'erreur ensuite. On attend donc la connexion — et on vide les
+  // données à la déconnexion, pour qu'un autre compte ne voie pas les siennes.
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    if (isAuthenticated) {
+      refresh();
+    } else {
+      setDonnees(VIDE);
+      setLoading(false);
+    }
+  }, [isAuthenticated, refresh]);
 
   // Exécute une écriture, recharge, et propage le résultat à l'appelant.
   // Toujours `{ ok, resultat }` ou `{ ok: false, erreur }` : les pages

@@ -602,3 +602,23 @@ export async function genererQuittancesManquantes() {
   }
   return creees;
 }
+
+// Accès direct à la couche métier depuis la console du navigateur, en
+// développement seulement. Les formulaires React pilotés au clavier sont
+// difficiles àfiabiliser dans un test automatisé ; passer par les fonctions
+// réelles, elles, exercise le même code que l'interface. Éplacé en
+// production par l'élimination du bloc.
+if (import.meta.env?.DEV && typeof window !== "undefined") {
+  window.__donnees = {
+    proprietaire: getProprietaire,
+    updateProprietaire,
+    listImmeubles, createImmeuble, updateImmeuble, deleteImmeuble,
+    listLots, createLot, updateLot, deleteLot,
+    listLocataires, createLocataire, updateLocataire, deleteLocataire,
+    listBaux, createBail, updateBail, deleteBail,
+    listLoyers, genererLoyersDepuis, genererLoyersPourPeriode,
+    listPaiements, enregistrerPaiement, deletePaiement,
+    listQuittances, genererQuittance, genererQuittancesManquantes,
+    listDepenses, createDepense, updateDepense, deleteDepense,
+  };
+}

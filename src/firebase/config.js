@@ -1,6 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getAuth, setPersistence, browserLocalPersistence } from "firebase/auth";
-import { getFirestore, enableIndexedDbPersistence } from "firebase/firestore";
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, getDoc, getDocs, collection, doc } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
@@ -21,8 +21,18 @@ export const configure = Boolean(firebaseConfig.apiKey && firebaseConfig.project
 
 export const app = configure ? initializeApp(firebaseConfig) : null;
 export const auth = configure ? getAuth(app) : null;
-export const db = configure ? getFirestore(app) : null;
 export const storage = configure ? getStorage(app) : null;
+
+// Cache local : les données déjà vues restent lisibles hors connexion, et la
+// file d'attente d'écritures survit à un rechargement. `persistentLocalCache`
+// retombe automatiquement en mémoire si IndexedDB est indisponible — contrairement
+// à l'ancien `enableIndexedDbPersistence`, qui bloquait le client au lieu de
+// dégrader proprement.
+export const db = configure
+  ? initializeFirestore(app, {
+      localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+    })
+  : null;
 
 if (configure) {
   // Session conservée : on ne demande pas le mot de passe à chaque ouverture.
@@ -30,8 +40,30 @@ if (configure) {
     /* persistance refusée : sans conséquence, la session reste en mémoire */
   });
 
-  // Hors-ligne : les données déjà consultées restent lisibles sans réseau.
-  enableIndexedDbPersistence(db).catch((err) => {
-    console.warn("Firestore hors-ligne indisponible :", err.code || err.message);
-  });
-}
+  if (import.meta.env.DEV) {
+    // Accès direct depuis la console du navigateur pour diagnostiquer une
+    // lecture Firestore qui ne répond pas. Éplacé en production.
+    window.__firebase = {
+      app,
+      auth,
+      db,
+      // Lecture de diagnostic, bornée dans le temps : une promesse qui ne
+      // répond pas doit se voir, pas figer la console.
+      lire: (chemin = "proprietaire/proprietaire", ms = 8000) =>
+        Promise.race([
+          getDoc(doc(db, ...chemin.split("/"))).then(
+            (s) => (s.exists() ? s.data() : "(absent)"),
+            (e) => `ERREUR: ${e.message}`
+          ),
+          new Promise((r) => setTimeout(() => r("TIMEOUT"), ms)),
+        ]),
+      lireCollection: (nom, ms = 8000) =>
+        Promise.race([
+          getDocs(collection(db, nom)).then(
+            (s) => s.docs.map((d) => d.id),
+            (e) => `ERREUR: ${e.message}`
+          ),
+          new Promise((r) => setTimeout(() => r("TIMEOUT"), ms)),
+        ]),
+    };
+  }}
