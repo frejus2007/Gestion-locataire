@@ -19,7 +19,7 @@ import { AlertTriangle, Check, Info } from "lucide-react";
 import { Modal } from "../../components/ui";
 import { useApp } from "../../context/AppContext";
 import { useToast } from "../../context/ToastContext";
-import { LIGNES_FRAIS, lignesPostesPour, POSTES_FRAIS } from "../../data/db";
+import { LIGNES_FRAIS, lignesPostesPour, POSTES_FRAIS } from "../../data/db.firebase";
 import { MOIS_ENCAISSEMENT_AVANCE } from "../../config/horizons";
 import {
   formatMoney,

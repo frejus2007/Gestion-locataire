@@ -17,7 +17,7 @@ import {
   accorde,
 } from "../utils/format";
 import { Card, EmptyState } from "./ui";
-import { lignesPostesPour } from "../data/db";
+import { lignesPostesPour } from "../data/db.firebase";
 
 function montantPoste(loyer, poste) {
   if (loyer[poste] !== undefined) return Number(loyer[poste]) || 0;

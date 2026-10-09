@@ -3,14 +3,12 @@
 // Les composants ne calculent jamais un solde eux-mêmes : ils appellent les
 // sélecteurs ci-dessous, qui sont la seule source de vérité des montants.
 //
-// Firestore est asynchrone : la lecture ne peut plus être faite pendant le
+// Firestore est asynchrone : la lecture ne peut pas être faite pendant le
 // rendu. Les données vivent donc dans un état, chargées au montage et
-// rechargées après chaque écriture. `Promise.all` accepte indifféremment les
-// valeurs synchrones du jeu local et les promesses de Firestore : le même
-// code sert les deux modes.
+// rechargées après chaque écriture.
 
 import { createContext, useContext, useState, useCallback, useMemo, useEffect } from "react";
-import { db } from "../utils/db-provider";
+import * as db from "../data/db.firebase";
 import { comparePeriode, periodeCourante } from "../utils/format";
 
 const { CATEGORIES_DEPENSE, MOIS_DE_PAYEMENT, LIGNES_FRAIS } = db;

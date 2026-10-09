@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import { useApp } from "../../context/AppContext";
 import { Card, EmptyState, Badge } from "../../components/ui";
-import { lignesPostesPour } from "../../data/db";
+import { lignesPostesPour } from "../../data/db.firebase";
 import { formatMoney, formatDate, periodeToLabel, periodeToCourt } from "../../utils/format";
 import Encaissement from "../paiements/Encaissement";
 

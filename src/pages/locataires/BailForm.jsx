@@ -19,7 +19,7 @@ import {
   periodesEntre,
   comparePeriode,
 } from "../../utils/format";
-import { LIGNES_FRAIS, postesALZero } from "../../data/db";
+import { LIGNES_FRAIS, postesALZero } from "../../data/db.firebase";
 
 const CAUTIONS = [
   { id: "non-versee", label: "Non versée" },

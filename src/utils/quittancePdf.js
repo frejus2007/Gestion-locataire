@@ -16,7 +16,7 @@
 //   ▸ Export du relevé Excel  src/utils/exportExcel.js
 
 import { jsPDF } from "jspdf";
-import { LIGNES_FRAIS } from "../data/db.js";
+import { LIGNES_FRAIS } from "../data/db.firebase.js";
 import { amountToWords, formatMoneyPlain } from "./format.js";
 import { tracerCodeBarre } from "./codeBarre.js";
 

@@ -7,7 +7,7 @@ import { Suspense, lazy, useState, useEffect } from "react";
 import { BrowserRouter, Routes, Route, Link } from "react-router-dom";
 import { AppProvider } from "./context/AppContext";
 import { ToastProvider } from "./context/ToastContext";
-import { AuthProvider } from "./context/AuthContext.bridge";
+import { AuthProvider } from "./context/AuthContext";
 import Layout from "./components/Layout";
 import ProtectedRoute from "./components/ProtectedRoute";
 import SplashScreen from "./components/SplashScreen";

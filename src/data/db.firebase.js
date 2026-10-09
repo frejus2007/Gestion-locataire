@@ -50,16 +50,6 @@ export const CATEGORIES_DEPENSE = [
   { id: "autre", label: "Autre" },
 ];
 
-export const POSTES_FRAIS = [
-  { cle: "loyer", label: "Loyer", key: "loyer" },
-  { cle: "eau", label: "Eau", key: "eau" },
-  { cle: "electricite", label: "Électricité", key: "electricite" },
-  { cle: "ordures", label: "Ordures", key: "ordures" },
-  { cle: "degats", label: "Dégâts", key: "degats" },
-  { cle: "autre1", label: "Autre 1", libre: "libelle1", key: "autre1" },
-  { cle: "autre2", label: "Autre 2", libre: "libelle2", key: "autre2" },
-];
-
 export const LIGNES_FRAIS = [
   { cle: "loyer", key: "loyer", label: "Loyer" },
   { cle: "eau", key: "eau", label: "Eau" },
@@ -69,6 +59,20 @@ export const LIGNES_FRAIS = [
   { cle: "autre1", key: "autre1", label: "Autre 1", libre: "libelle1" },
   { cle: "autre2", key: "autre2", label: "Autre 2", libre: "libelle2" },
 ];
+
+/**
+ * Clés des postes, dans l'ordre d'affichage.
+ *
+ * Une liste de chaînes, pas d'objets : les pages indexent directement avec
+ * (`detail[cle]`), et `LIGNES_FRAIS` porte déjà les libellés. Serving ici des
+ * objets ferait écrire `detail[object Object]`, soit des frais à zéro.
+ */
+export const POSTES_FRAIS = LIGNES_FRAIS.map((l) => l.key);
+
+/** Un loyer dont tous les postes sont à zéro. */
+export function postesALZero() {
+  return Object.fromEntries(POSTES_FRAIS.map((k) => [k, 0]));
+}
 
 /** Les postes avec le libellé applicable à un bail, prêts à afficher. */
 export function lignesPostesPour(bail) {
@@ -114,11 +118,11 @@ async function lireUn(nom, id) {
 // --- Règles de métier (portées de db.js) ---
 
 const totalPostes = (l) =>
-  POSTES_FRAIS.reduce((s, poste) => s + (Number(l[poste.key]) || 0), 0);
+  POSTES_FRAIS.reduce((s, cle) => s + (Number(l[cle]) || 0), 0);
 
 function fraisDefautBail(bail) {
   const f = bail.fraisDefaut || {};
-  return Object.fromEntries(POSTES_FRAIS.map((p) => [p.key, Number(f[p.key]) || 0]));
+  return Object.fromEntries(POSTES_FRAIS.map((cle) => [cle, Number(f[cle]) || 0]));
 }
 
 const periodeDebutBail = (bail) => bail.dateDebut.slice(0, 7);
@@ -137,10 +141,10 @@ const bailActifCouvre = (bail, periode, max = periodeCourante()) =>
 
 function appliquerDetailLoyer(loyer, detail) {
   const montants = Object.fromEntries(
-    POSTES_FRAIS.map((p) => [p.key, Math.max(0, Math.round(Number(detail[p.key]) || 0))])
+    POSTES_FRAIS.map((cle) => [cle, Math.max(0, Math.round(Number(detail[cle]) || 0))])
   );
   loyer.loyer = montants.loyer;
-  for (const p of POSTES_FRAIS) if (p.key !== "loyer") loyer[p.key] = montants[p.key];
+  for (const cle of POSTES_FRAIS) if (cle !== "loyer") loyer[cle] = montants[cle];
   loyer.montantDu = totalPostes(loyer);
   return loyer;
 }
@@ -407,7 +411,7 @@ export async function enregistrerPaiement(data) {
 
   const detail = data.detail
     ? Object.fromEntries(
-        POSTES_FRAIS.map((p) => [p.key, Math.max(0, Math.round(Number(data.detail[p.key]) || 0))])
+        POSTES_FRAIS.map((cle) => [cle, Math.max(0, Math.round(Number(data.detail[cle]) || 0))])
       )
     : null;
   if (detail && detail.loyer <= 0) throw new Error("Le loyer doit être supérieur à zéro");

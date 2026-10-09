@@ -15,11 +15,11 @@ const ARGUMENTS = [
 ];
 
 export default function Login() {
-  const { login, defaultCredentials } = useAuth();
+  const { login } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
-  const [email, setEmail] = useState(defaultCredentials.email);
+  const [email, setEmail] = useState("");
   const [motDePasse, setMotDePasse] = useState("");
   const [erreur, setErreur] = useState("");
   const [chargement, setChargement] = useState(false);
@@ -115,15 +115,6 @@ export default function Login() {
             {chargement ? "Connexion…" : "Se connecter"}
             {!chargement ? <Check size={16} /> : null}
           </button>
-
-          {/* Les identifiants de démonstration n'existent qu'en mode local.
-              En mode Firebase, cette ligne afficherait des champs vides. */}
-          {defaultCredentials.email ? (
-            <p className="login-aide">
-              Par défaut : <code>{defaultCredentials.email}</code> /{" "}
-              <code>{defaultCredentials.password}</code>
-            </p>
-          ) : null}
         </form>
       </main>
     </div>

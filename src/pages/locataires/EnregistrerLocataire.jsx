@@ -17,7 +17,7 @@ import { Check, Home, IdCard, FileSignature, KeyRound, Receipt } from "lucide-re
 import { Modal, Field, TextInput, Select, ErrorBanner } from "../../components/ui";
 import { useApp } from "../../context/AppContext";
 import { useToast } from "../../context/ToastContext";
-import { postesALZero } from "../../data/db";
+import { postesALZero } from "../../data/db.firebase";
 import { formatMoney, periodeCourante } from "../../utils/format";
 
 const AUJOURDHUI = new Date().toISOString().slice(0, 10);

@@ -20,7 +20,7 @@ import {
 import { useApp } from "../context/AppContext";
 import { useToast } from "../context/ToastContext";
 import { Card, EmptyState, ConfirmDialog, Modal } from "../components/ui";
-import { LIGNES_FRAIS, POSTES_FRAIS } from "../data/db";
+import { LIGNES_FRAIS, POSTES_FRAIS } from "../data/db.firebase";
 import { formatMoney, formatDate } from "../utils/format";
 import { construireQuittance, telecharger, ouvrir, preparerLogo, preparerSignature } from "../utils/quittancePdf";
 import Encaissement from "./paiements/Encaissement";

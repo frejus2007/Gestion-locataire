@@ -1,125 +1,108 @@
-import { createContext, useContext, useState, useCallback } from "react";
+import { createContext, useContext, useEffect, useState, useCallback } from "react";
+import {
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signOut,
+  updatePassword,
+  reauthenticateWithCredential,
+  EmailAuthProvider,
+} from "firebase/auth";
+import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
+import { auth, db } from "../firebase/config";
 
 const AuthContext = createContext(null);
 
-const STORAGE_KEY = "cag_auth_session";
-const PASSWORD_KEY = "cag_admin_password";
-
-// Compte gestionnaire par défaut
-const DEFAULT_CREDENTIALS = {
-  email: "admin@cag-immobilier.bj",
-  password: "admin",
-  nom: "KOUASSI",
-  prenoms: "Jean-Marc",
-  role: "Bailleur gestionnaire",
-  cabinet: "Chabi Arnaud GOUNOU",
-};
-
-/**
- * Mot de passe applicable au compte gestionnaire.
- * Celui de la page Paramètres prime : dès qu'il est modifié, il remplace
- * celui du jeu de démonstration, et ce pour tous les navigateurs de l'appareil.
- */
-function motDePasseEnCours() {
-  try {
-    return localStorage.getItem(PASSWORD_KEY) || DEFAULT_CREDENTIALS.password;
-  } catch {
-    return DEFAULT_CREDENTIALS.password;
-  }
-}
-
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY) || sessionStorage.getItem(STORAGE_KEY);
-      return saved ? JSON.parse(saved) : null;
-    } catch {
-      return null;
-    }
-  });
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-  const [loading, setLoading] = useState(false);
-
-  const login = useCallback(async (email, password, remember = true) => {
-    setLoading(true);
-    // Simulation d'un délai réseau réaliste pour une UX fluide
-    await new Promise((resolve) => setTimeout(resolve, 600));
-
-    const cleanEmail = (email || "").trim().toLowerCase();
-    const cleanPass = (password || "").trim();
-
-    // Authentification : accepte les identifiants officiels ou le compte démo
-    const attendu = motDePasseEnCours();
-    const estCompteOfficiel =
-      cleanEmail === "admin@cag-immobilier.bj" || cleanEmail === "admin";
-    const isAccepted = estCompteOfficiel
-      ? cleanPass === attendu
-      : cleanEmail.includes("@") && cleanPass.length >= 4;
-
-    if (isAccepted) {
-      const userData = {
-        id: "usr_admin_01",
-        email: cleanEmail.includes("@") ? cleanEmail : "admin@cag-immobilier.bj",
-        nom: DEFAULT_CREDENTIALS.nom,
-        prenoms: DEFAULT_CREDENTIALS.prenoms,
-        role: DEFAULT_CREDENTIALS.role,
-        cabinet: DEFAULT_CREDENTIALS.cabinet,
-        derniereConnexion: new Date().toISOString(),
-      };
-
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
+      setLoading(true);
       try {
-        if (remember) {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(userData));
-          sessionStorage.removeItem(STORAGE_KEY);
+        if (firebaseUser) {
+          const ref = doc(db, "users", firebaseUser.uid);
+          const snap = await getDoc(ref);
+          let profile = {};
+          if (snap.exists()) profile = snap.data();
+          else {
+            profile = {
+              nom: firebaseUser.displayName?.split(" ")?.slice(-1)?.join(" ") || "",
+              prenoms: firebaseUser.displayName?.split(" ")?.slice(0, -1)?.join(" ") || firebaseUser.displayName || "",
+              role: "Bailleur gestionnaire",
+              cabinet: "Chabi Arnaud GOUNOU",
+              createdAt: serverTimestamp(),
+            };
+            await setDoc(ref, profile, { merge: true });
+          }
+          setUser({
+            id: firebaseUser.uid,
+            uid: firebaseUser.uid,
+            email: firebaseUser.email,
+            ...profile,
+            derniereConnexion: new Date().toISOString(),
+          });
         } else {
-          sessionStorage.setItem(STORAGE_KEY, JSON.stringify(userData));
-          localStorage.removeItem(STORAGE_KEY);
+          setUser(null);
         }
-      } catch (err) {
-        console.warn("Impossible d'écrire dans le storage local:", err);
+      } catch (e) {
+        console.warn("Auth state error:", e);
+        setUser(null);
+      } finally {
+        setLoading(false);
       }
-
-      setUser(userData);
-      setLoading(false);
-      return { ok: true, user: userData };
-    }
-
-    setLoading(false);
-    return {
-      ok: false,
-      error: "Identifiants invalides. Vérifiez votre adresse email et votre mot de passe.",
-    };
+    });
+    return () => unsub();
   }, []);
 
-  const logout = useCallback(() => {
+  const login = useCallback(async (email, password) => {
+    setLoading(true);
     try {
-      localStorage.removeItem(STORAGE_KEY);
-      sessionStorage.removeItem(STORAGE_KEY);
-    } catch (err) {
-      console.warn("Erreur lors de la déconnexion:", err);
+      const cred = await signInWithEmailAndPassword(auth, email, password);
+      return { ok: true, user: cred.user };
+    } catch (e) {
+      return { ok: false, error: messageAuth(e) };
+    } finally {
+      setLoading(false);
     }
+  }, []);
+
+  const logout = useCallback(async () => {
+    await signOut(auth);
     setUser(null);
   }, []);
 
   /**
-   * Modification du mot de passe du compte gestionnaire.
-   * Renvoie { ok } ou { ok: false, error }.
+   * Change le mot de passe du compte connecté.
+   *
+   * Firebase exige qu'une opération sensible soit précédée d'une
+   * réauthentification : sans cela, une session restée ouverte sur un poste
+   * partagé suffirait à verrouiller le propriétaire hors de son propre compte.
+   * On redemande donc le mot de passe actuel avant d'accepter le nouveau — ce
+   * qui est de toute façon le comportement attendu.
+   *
+   * @returns {Promise<{ok: boolean, error?: string}>}
    */
   const changePassword = useCallback(async (actuel, nouveau) => {
-    await new Promise((r) => setTimeout(r, 400));
-    if (!actuel || String(actuel) !== motDePasseEnCours()) {
-      return { ok: false, error: "Mot de passe actuel incorrect" };
-    }
+    const u = auth.currentUser;
+    if (!u?.email) return { ok: false, error: "Aucun compte connecté" };
+    if (!actuel) return { ok: false, error: "Saisissez votre mot de passe actuel" };
     if (!nouveau || String(nouveau).length < 6) {
-      return { ok: false, error: "Le mot de passe doit contenir au moins 6 caractères" };
+      return { ok: false, error: "Le nouveau mot de passe doit contenir au moins 6 caractères" };
+    }
+    if (actuel === nouveau) {
+      return { ok: false, error: "Le nouveau mot de passe doit être différent de l'ancien" };
     }
     try {
-      localStorage.setItem(PASSWORD_KEY, String(nouveau));
-    } catch (err) {
-      console.warn("Mot de passe non enregistré:", err);
-      return { ok: false, error: "Impossible d'enregistrer le mot de passe sur cet appareil" };
+      // Preuve que c'est bien le propriétaire : c'est cette étape qui fait
+      // échouer la saisie si le mot de passe actuel est faux.
+      const cred = EmailAuthProvider.credential(u.email, actuel);
+      await reauthenticateWithCredential(u, cred);
+      await updatePassword(u, nouveau);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: messageAuth(e) };
     }
-    return { ok: true };
   }, []);
 
   return (
@@ -131,12 +114,41 @@ export function AuthProvider({ children }) {
         login,
         logout,
         changePassword,
-        defaultCredentials: DEFAULT_CREDENTIALS,
       }}
     >
       {children}
     </AuthContext.Provider>
   );
+}
+
+/**
+ * Traduit les codes d'erreur Firebase en français.
+ *
+ * Les messages bruts sont en anglais et parfois peu parlants («
+ * auth/wrong-password »), ce qui laisse le propriétaire devant une impasse
+ * sans savoir quoi corriger.
+ */
+function messageAuth(e) {
+  switch (e?.code) {
+    case "auth/wrong-password":
+    case "auth/invalid-credential":
+      return "Mot de passe actuel incorrect";
+    case "auth/invalid-email":
+      return "Adresse email invalide";
+    case "auth/weak-password":
+      return "Ce mot de passe est trop faible";
+    case "auth/too-many-requests":
+      return "Trop de tentatives. Patientez quelques minutes avant de réessayer.";
+    case "auth/user-not-found":
+    case "auth/invalid-user-credentials":
+      return "Identifiants invalides";
+    case "auth/requires-recent-login":
+      return "Session trop ancienne. Déconnectez-vous et reconnectez-vous.";
+    case "auth/network-request-failed":
+      return "Connexion impossible. Vérifiez votre accès à Internet.";
+    default:
+      return e?.message || "Opération impossible";
+  }
 }
 
 export function useAuth() {
