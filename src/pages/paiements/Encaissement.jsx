@@ -19,13 +19,7 @@ import { AlertTriangle, Check, Info } from "lucide-react";
 import { Modal } from "../../components/ui";
 import { useApp } from "../../context/AppContext";
 import { useToast } from "../../context/ToastContext";
-import {
-  LIGNES_FRAIS,
-  lignesPostesPour,
-  genererLoyersDepuis,
-  listLoyers,
-  POSTES_FRAIS,
-} from "../../data/db";
+import { LIGNES_FRAIS, lignesPostesPour, POSTES_FRAIS } from "../../data/db";
 import { MOIS_ENCAISSEMENT_AVANCE } from "../../config/horizons";
 import {
   formatMoney,
@@ -97,8 +91,8 @@ function moisProposes(bail) {
 }
 
 export default function Encaissement({ bail: bailInitial, onClose, onEncaisser }) {
-  const { bauxParId, lotsParId, immeublesParId, baux, locatairesParId, loyers, paiements, enregistrerPaiement, genererQuittance } =
-    useApp();
+  const { bauxParId, lotsParId, immeublesParId, baux, locatairesParId, loyers, paiements,
+          enregistrerPaiement, genererQuittance, genererDepuis } = useApp();
   const { addToast } = useToast();
 
   // Locataire déjà connu (ouverture depuis une fiche) : on bloque le sélecteur.
@@ -232,7 +226,7 @@ export default function Encaissement({ bail: bailInitial, onClose, onEncaisser }
   // propriétaire ne comprend pas pourquoi l'encaissement est rejeté.
   const depasse = Boolean(bail) && restePeriode > 0 && totalLignes > restePeriode;
 
-  const enregistrer = () => {
+  const enregistrer = async () => {
     if (!bail) {
       addToast("Choisissez un locataire", "error");
       return;
@@ -244,9 +238,17 @@ export default function Encaissement({ bail: bailInitial, onClose, onEncaisser }
 
     // Les loyers des mois couverts doivent exister avant d'imputer le paiement :
     // ils sont créés à la volée, ce qui évite une manipulation à part.
-    genererLoyersDepuis(bail.id, debut, fin);
-    const loyers = listLoyers().filter((l) => l.bailId === bail.id);
-    const loyer = loyers.find((l) => l.periode === debut);
+    // On passe par le contexte, et non par la couche de données en direct : en
+    // mode Firebase, un accès direct porterait sur la mémoire locale et les
+    // loyers seraient recréés à chaque encaissement.
+    const gen = await genererDepuis(bail.id, debut);
+    if (!gen.ok) {
+      addToast(gen.erreur || "Impossible de préparer les loyers", "error");
+      return;
+    }
+    // `run` recharge la base : les loyers créés sont donc disponibles dans
+    // `gen.donnees`, pas dans `loyers` (qui date du rendu précédent).
+    const loyer = gen.donnees?.loyers.find((l) => l.bailId === bail.id && l.periode === debut);
     if (!loyer) {
       addToast("Aucun loyer ne correspond à cette période", "error");
       return;
@@ -254,7 +256,7 @@ export default function Encaissement({ bail: bailInitial, onClose, onEncaisser }
     const allocations = [{ loyerId: loyer.id, montant: totalLignes }];
 
     try {
-      const res = enregistrerPaiement({
+      const res = await enregistrerPaiement({
         bailId: bail.id,
         locataireId: bail.locataireId,
         date,
@@ -269,7 +271,14 @@ export default function Encaissement({ bail: bailInitial, onClose, onEncaisser }
       // paiement créé qu'il faut utiliser pour émettre la quittance.
       const paiement = res?.resultat?.paiement;
       if (res?.ok && paiement?.id) {
-        genererQuittance(paiement.id);
+        // La quittance est émise avant le message : sur Firestore l'écriture
+        // est réseau, afficher « quittance émise » puis échouer en silence
+        // laisserait croire à un reçu que le locataire n'a pas.
+        const emise = await genererQuittance(paiement.id);
+        if (!emise.ok) {
+          addToast("Paiement enregistré, mais la quittance n'a pas pu être émise", "error");
+          return;
+        }
         addToast(
           `Paiement de ${formatMoney(totalLignes)} encaissé — quittance émise`,
           "success"

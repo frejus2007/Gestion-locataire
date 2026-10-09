@@ -2,10 +2,14 @@
 //
 // Les composants ne calculent jamais un solde eux-mêmes : ils appellent les
 // sélecteurs ci-dessous, qui sont la seule source de vérité des montants.
-// Avec Firebase, seul le rechargement (refresh) sera remplacé par des
-// onSnapshot ; les sélecteurs resteront identiques.
+//
+// Firestore est asynchrone : la lecture ne peut plus être faite pendant le
+// rendu. Les données vivent donc dans un état, chargées au montage et
+// rechargées après chaque écriture. `Promise.all` accepte indifféremment les
+// valeurs synchrones du jeu local et les promesses de Firestore : le même
+// code sert les deux modes.
 
-import { createContext, useContext, useState, useCallback, useMemo } from "react";
+import { createContext, useContext, useState, useCallback, useMemo, useEffect } from "react";
 import { db } from "../utils/db-provider";
 import { comparePeriode, periodeCourante } from "../utils/format";
 
@@ -13,48 +17,86 @@ const { CATEGORIES_DEPENSE, MOIS_DE_PAYEMENT, LIGNES_FRAIS } = db;
 
 const AppContext = createContext(null);
 
+const VIDE = {
+  proprietaire: null,
+  immeubles: [],
+  lots: [],
+  locataires: [],
+  baux: [],
+  loyers: [],
+  paiements: [],
+  depenses: [],
+  quittances: [],
+};
+
 export function AppProvider({ children }) {
-  const [version, setVersion] = useState(0);
+  const [donnees, setDonnees] = useState(VIDE);
   const [loading, setLoading] = useState(true);
   const [erreur, setErreur] = useState(null);
 
-  // Toute écriture passe par ici : on recharge depuis la source puis on incrémente
-  // la version, ce qui redéclenche les sélecteurs.
-  const refresh = useCallback(() => {
-    setErreur(null);
-    setVersion((v) => v + 1);
+  // Relit l'ensemble de la base. Volontairement exhaustive plutôt que ciblée :
+  // le volume d'un parc locatif tient largement en mémoire, et un rechargement
+  // partiel finit toujours par laisser un écran incohérent.
+  //
+  // Renvoie les données lues : après une écriture, l'appelant a souvent besoin
+  // du document qu'il vient de créer (un loyer à imputer, un lot à ouvrir).
+  // Se fier à l'état du composant ne marcherait pas — il date du rendu
+  // précédent, donc d'avant l'écriture.
+  const refresh = useCallback(async () => {
+    try {
+      const [proprietaire, immeubles, lots, locataires, baux, loyers, paiements, depenses, quittances] =
+        await Promise.all([
+          db.getProprietaire(),
+          db.listImmeubles(),
+          db.listLots(),
+          db.listLocataires(),
+          db.listBaux(),
+          db.listLoyers(),
+          db.listPaiements(),
+          db.listDepenses(),
+          db.listQuittances(),
+        ]);
+      const lu = { proprietaire, immeubles, lots, locataires, baux, loyers, paiements, depenses, quittances };
+      setDonnees(lu);
+      setErreur(null);
+      return lu;
+    } catch (e) {
+      // L'écran doit rester utilisable : on note l'erreur et on garde les
+      // dernières données connues plutôt que de tout vider.
+      setErreur(e.message);
+      return null;
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  // Exécute une écriture et propage son erreur message à l'appelant.
-  const run = useCallback((action) => {
-    setLoading(true);
-    try {
-      const resultat = action();
-      refresh();
-      setLoading(false);
-      return { ok: true, resultat };
-    } catch (e) {
-      setErreur(e.message);
-      setLoading(false);
-      return { ok: false, erreur: e.message };
-    }
+  useEffect(() => {
+    refresh();
   }, [refresh]);
 
-  const donnees = useMemo(
-    () => ({
-      proprietaire: db.getProprietaire(),
-      immeubles: db.listImmeubles(),
-      lots: db.listLots(),
-      locataires: db.listLocataires(),
-      baux: db.listBaux(),
-      loyers: db.listLoyers(),
-      paiements: db.listPaiements(),
-      depenses: db.listDepenses(),
-      quittances: db.listQuittances(),
-    }),
-    // `version` n'est pas lue dans le calcul : c'est la clé d'invalidation.
-    // Toute écriture l'incrémente, ce qui force la relecture de la source.
-    [version]
+  // Exécute une écriture, recharge, et propage le résultat à l'appelant.
+  // Toujours `{ ok, resultat }` ou `{ ok: false, erreur }` : les pages
+  // testent `res.ok` et affichent `res.erreur`.
+  //
+  // `resultat` est l'effet de l'écriture ; `donnees` est l'état complet relu
+  // juste après, ce qui permet à l'appelant de récupérer un document créé
+  // (un loyer généré, un lot à ouvrir) sans rely sur son rendu précédent.
+  const run = useCallback(
+    async (action) => {
+      setLoading(true);
+      try {
+        const resultat = await action();
+        const donnees = await refresh();
+        setLoading(false);
+        return { ok: true, resultat, donnees };
+      } catch (e) {
+        await refresh();
+        setErreur(e.message);
+        setLoading(false);
+        return { ok: false, erreur: e.message };
+      }
+    },
+    [refresh]
   );
 
   const sel = useMemo(() => createSelecteurs(donnees), [donnees]);
@@ -84,8 +126,8 @@ export function AppProvider({ children }) {
       // Baux
       saveBail: (data, id = null) => run(() => (id ? db.updateBail(id, data) : db.createBail(data))),
       removeBail: (id) => run(() => db.deleteBail(id)),
-      genererDepuis: (bailId, periodeDebut) =>
-        run(() => db.genererLoyersDepuis(bailId, periodeDebut)),
+      genererDepuis: (bailId, periodeDebut, periodeFin = null) =>
+        run(() => db.genererLoyersDepuis(bailId, periodeDebut, periodeFin)),
       genererPeriode: (periode) => run(() => db.genererLoyersPourPeriode(periode)),
 
       // Paiements

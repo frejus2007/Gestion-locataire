@@ -88,9 +88,9 @@ export default function Locataires() {
     return texte.includes(recherche.toLowerCase().trim());
   });
 
-  const supprimer = () => {
+  const supprimer = async () => {
     const cible = lignes.find((l) => l.bail.id === aSupprimer);
-    const res = removeLocataire(cible?.locataire?.id);
+    const res = await removeLocataire(cible?.locataire?.id);
     if (res?.ok !== false) {
       addToast("Locataire supprimé", "success");
       setASupprimer(null);

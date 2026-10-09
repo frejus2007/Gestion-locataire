@@ -71,10 +71,10 @@ export default function LocataireForm() {
     return Object.keys(e).length === 0;
   };
 
-  const enregistrer = (e) => {
+  const enregistrer = async (e) => {
     e.preventDefault();
     if (!valider()) return;
-    const res = saveLocataire(
+    const res = await saveLocataire(
       {
         ...form,
         nom: form.nom.trim().toUpperCase(),

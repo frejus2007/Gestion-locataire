@@ -143,8 +143,8 @@ export default function ImmeubleDetail() {
     .filter(Boolean)
     .sort((a, b) => b.dette - a.dette);
 
-  const supprimerImmeuble = () => {
-    const res = removeImmeuble(id);
+  const supprimerImmeuble = async () => {
+    const res = await removeImmeuble(id);
     if (res.ok) {
       addToast("Immeuble supprimé");
       navigate("/immeubles");
@@ -153,12 +153,12 @@ export default function ImmeubleDetail() {
     }
   };
 
-  const ajouterLot = () => {
+  const ajouterLot = async () => {
     if (!lot.designation.trim()) {
       setErreur("La désignation du lot est requise.");
       return;
     }
-    const res = saveLot(
+    const res = await saveLot(
       {
         ...lot,
         immeubleId: id,
@@ -177,8 +177,8 @@ export default function ImmeubleDetail() {
     setErreur(null);
   };
 
-  const supprimerLot = () => {
-    const res = removeLot(aSupprimerLot);
+  const supprimerLot = async () => {
+    const res = await removeLot(aSupprimerLot);
     if (res.ok) addToast("Lot supprimé");
     setASupprimerLot(null);
   };

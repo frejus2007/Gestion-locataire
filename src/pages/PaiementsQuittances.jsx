@@ -129,8 +129,8 @@ export default function PaiementsQuittances() {
     }
   };
 
-  const supprimer = () => {
-    const res = removePaiement(aSupprimer);
+  const supprimer = async () => {
+    const res = await removePaiement(aSupprimer);
     if (res?.ok !== false) {
       addToast("Paiement supprimé — les loyers concernés redeviennent impayés", "success");
       setASupprimer(null);

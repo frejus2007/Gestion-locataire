@@ -39,10 +39,10 @@ export default function ImmeubleForm() {
     return Object.keys(e).length === 0;
   };
 
-  const enregistrer = (e) => {
+  const enregistrer = async (e) => {
     e.preventDefault();
     if (!valider()) return;
-    const res = saveImmeuble({ ...form, nom: form.nom.trim() }, id || null);
+    const res = await saveImmeuble({ ...form, nom: form.nom.trim() }, id || null);
     if (!res.ok) {
       setErreurGlobale(res.erreur);
       return;
@@ -58,13 +58,13 @@ export default function ImmeubleForm() {
     }
   };
 
-  const ajouterLot = (e) => {
+  const ajouterLot = async (e) => {
     e.preventDefault();
     if (!lot.designation.trim()) {
       setErreurGlobale("La désignation du lot est requise.");
       return;
     }
-    const res = saveLot({
+    const res = await saveLot({
       ...lot,
       immeubleId: id,
       nbPieces: Number(lot.nbPieces) || null,
@@ -259,8 +259,8 @@ function LotTable({ immeubleId, onAjouter }) {
     );
   }
 
-  const supprimer = () => {
-    const res = removeLot(aSupprimer);
+  const supprimer = async () => {
+    const res = await removeLot(aSupprimer);
     if (res.ok) addToast("Lot supprimé");
     setASupprimer(null);
   };

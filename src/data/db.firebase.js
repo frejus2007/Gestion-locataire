@@ -1,9 +1,21 @@
-// Service de données — implémentation Firestore
+// Service de données — implémentation Firestore.
 //
-// API calquée sur src/data/db.js pour permettre un basculement transparent
-// entre mode mock et mode Firebase.
+// L'API est volontairement calquée sur celle de `db.js` : mêmes noms de
+// fonctions, mêmes paramètres, mêmes formes de retour. Les pages ne changent
+// pas, seule la source des données change.
 //
-// Tout est asynchrone : les fonctions renvoient des Promises.
+// Deux différences assumées vis-à-vis du jeu en mémoire :
+//
+//   1. Tout est asynchrone. Une fonction renvoie une promesse ; c'est au
+//      contexte d'application de l'attendre.
+//
+//   2. Le métier d'encaissement est réimplémenté ici plutôt que réutilisé.
+//      Les règles — imputation mois par mois,.avance sur les mois suivants,
+//      interdits de dépassement — sont déterministes et font authorities du
+//      reste du logiciel : il n'y a pas lieu de les laisser dépendre d'un
+//      objet en mémoire. L'ensemble tourne dans une transaction Firestore,
+//      afin que deux encaissements simultanés ne puissent pas s'imputer le
+//      même mois.
 
 import {
   collection,
@@ -14,55 +26,14 @@ import {
   updateDoc,
   deleteDoc,
   addDoc,
-  query,
-  where,
-  orderBy,
-  limit,
   runTransaction,
   serverTimestamp,
-  writeBatch,
 } from "firebase/firestore";
 import { db } from "../firebase/config";
-import { periodeCourante, periodeDecalee, comparePeriode } from "../utils/format.js";
+import { comparePeriode, periodeCourante, periodeDecalee } from "../utils/format.js";
 
-export function nextId(prefix) {
-  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-}
+// --- Constantes de référence (mêmes valeurs que db.js) ---
 
-const dupliquer = (obj) => JSON.parse(JSON.stringify(obj));
-
-// Collections
-const C_PROPRIETAIRE = "proprietaire";
-const C_IMMEUBLES = "immeubles";
-const C_LOTS = "lots";
-const C_LOCATAIRES = "locataires";
-const C_BAUX = "baux";
-const C_LOYERS = "loyers";
-const C_PAIEMENTS = "paiements";
-const C_QUITTANCES = "quittances";
-const C_DEPENSES = "depenses";
-const C_COUNTERS = "counters";
-
-// --- Helpers
-async function getCollection(name) {
-  const snap = await getDocs(collection(db, name));
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-}
-
-async function getById(name, id) {
-  const ref = doc(db, name, id);
-  const snap = await getDoc(ref);
-  if (!snap.exists()) return null;
-  return { id: snap.id, ...snap.data() };
-}
-
-async function setById(name, id, data) {
-  const ref = doc(db, name, id);
-  await setDoc(ref, { ...data, updatedAt: serverTimestamp() }, { merge: true });
-  return id;
-}
-
-// --- Données de référence (mêmes exports)
 export const MOIS_DE_PAYEMENT = [
   { id: "especes", label: "Espèces" },
   { id: "virement", label: "Virement bancaire" },
@@ -71,31 +42,129 @@ export const MOIS_DE_PAYEMENT = [
 ];
 
 export const CATEGORIES_DEPENSE = [
-  "Entretien & réparations",
-  "Charges communes",
-  "Assurance",
-  "Taxes foncières",
-  "Main d'œuvre",
-  "Autre",
+  { id: "entretien", label: "Entretien courant" },
+  { id: "reparation", label: "Réparation" },
+  { id: "charges", label: "Charges et taxes" },
+  { id: "travaux", label: "Travaux et rénovation" },
+  { id: "fourniture", label: "Fournitures et équipements" },
+  { id: "autre", label: "Autre" },
 ];
 
-export const POSTES_FRAIS = ["loyer", "eau", "electricite", "ordures", "degats", "autre1", "autre2"];
+export const POSTES_FRAIS = [
+  { cle: "loyer", label: "Loyer", key: "loyer" },
+  { cle: "eau", label: "Eau", key: "eau" },
+  { cle: "electricite", label: "Électricité", key: "electricite" },
+  { cle: "ordures", label: "Ordures", key: "ordures" },
+  { cle: "degats", label: "Dégâts", key: "degats" },
+  { cle: "autre1", label: "Autre 1", libre: "libelle1", key: "autre1" },
+  { cle: "autre2", label: "Autre 2", libre: "libelle2", key: "autre2" },
+];
 
 export const LIGNES_FRAIS = [
-  { cle: "loyer", label: "Loyer" },
-  { cle: "eau", label: "Eau" },
-  { cle: "electricite", label: "Électricité" },
-  { cle: "ordures", label: "Ordures" },
-  { cle: "degats", label: "Dégâts" },
-  { cle: "autre1", label: "Autre 1" },
-  { cle: "autre2", label: "Autre 2" },
+  { cle: "loyer", key: "loyer", label: "Loyer" },
+  { cle: "eau", key: "eau", label: "Eau" },
+  { cle: "electricite", key: "electricite", label: "Électricité" },
+  { cle: "ordures", key: "ordures", label: "Ordures" },
+  { cle: "degats", key: "degats", label: "Dégâts" },
+  { cle: "autre1", key: "autre1", label: "Autre 1", libre: "libelle1" },
+  { cle: "autre2", key: "autre2", label: "Autre 2", libre: "libelle2" },
 ];
 
-// --- Propriétaire
+/** Les postes avec le libellé applicable à un bail, prêts à afficher. */
+export function lignesPostesPour(bail) {
+  const f = bail?.fraisDefaut || {};
+  const libres = Object.fromEntries(
+    LIGNES_FRAIS.filter((l) => l.libre).map((l) => [l.key, f[l.libre] || l.label])
+  );
+  return LIGNES_FRAIS.map((l) => ({ ...l, label: libres[l.key] || l.label }));
+}
+
+const dupliquer = (obj) => JSON.parse(JSON.stringify(obj));
+
+let compteur = 0;
+export function nextId(prefix) {
+  compteur += 1;
+  return `${prefix}_${Date.now().toString(36)}${String(compteur).padStart(3, "0")}`;
+}
+
+// --- Accès de base ---
+
+const COLLECTIONS = {
+  proprietaire: "proprietaire",
+  immeubles: "immeubles",
+  lots: "lots",
+  locataires: "locataires",
+  baux: "baux",
+  loyers: "loyers",
+  paiements: "paiements",
+  quittances: "quittances",
+  depenses: "depenses",
+};
+
+async function lireCollection(nom) {
+  const snap = await getDocs(collection(db, nom));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+async function lireUn(nom, id) {
+  const snap = await getDoc(doc(db, nom, id));
+  return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+}
+
+// --- Règles de métier (portées de db.js) ---
+
+const totalPostes = (l) =>
+  POSTES_FRAIS.reduce((s, poste) => s + (Number(l[poste.key]) || 0), 0);
+
+function fraisDefautBail(bail) {
+  const f = bail.fraisDefaut || {};
+  return Object.fromEntries(POSTES_FRAIS.map((p) => [p.key, Number(f[p.key]) || 0]));
+}
+
+const periodeDebutBail = (bail) => bail.dateDebut.slice(0, 7);
+const periodeFinBail = (bail, max = periodeCourante()) =>
+  bail.dateFin ? bail.dateFin.slice(0, 7) : max;
+
+function bailCouvre(bail, periode, max = periodeCourante()) {
+  return (
+    comparePeriode(periodeDebutBail(bail), periode) <= 0 &&
+    comparePeriode(periode, periodeFinBail(bail, max)) <= 0
+  );
+}
+
+const bailActifCouvre = (bail, periode, max = periodeCourante()) =>
+  comparePeriode(periode, max) <= 0 && bailCouvre(bail, periode, max);
+
+function appliquerDetailLoyer(loyer, detail) {
+  const montants = Object.fromEntries(
+    POSTES_FRAIS.map((p) => [p.key, Math.max(0, Math.round(Number(detail[p.key]) || 0))])
+  );
+  loyer.loyer = montants.loyer;
+  for (const p of POSTES_FRAIS) if (p.key !== "loyer") loyer[p.key] = montants[p.key];
+  loyer.montantDu = totalPostes(loyer);
+  return loyer;
+}
+
+/** Total déjà imputé sur un loyer, tous paiements confondus. */
+function totalAllouePourLoyer(paiements, loyerId, ignorerPaiementId = null) {
+  return paiements
+    .filter((p) => p.id !== ignorerPaiementId)
+    .reduce((s, p) => {
+      const alloc = (p.allocations || []).find((a) => a.loyerId === loyerId);
+      return s + (alloc ? alloc.montant : 0);
+    }, 0);
+}
+
+function statutPour(paye, montantDu) {
+  return paye <= 0 ? "impaye" : paye >= montantDu ? "paye" : "partiel";
+}
+
+// --- Propriétaire ---
+
 export async function getProprietaire() {
-  const snap = await getDoc(doc(db, C_PROPRIETAIRE, "proprietaire"));
-  if (snap.exists()) return { id: snap.id, ...snap.data() };
-  const def = {
+  const existant = await lireUn(COLLECTIONS.proprietaire, "proprietaire");
+  if (existant) return existant;
+  const defaut = {
     id: "proprietaire",
     nom: "KOUASSI",
     prenoms: "Jean-Marc",
@@ -111,190 +180,421 @@ export async function getProprietaire() {
       { reseau: "Celtis", numero: "" },
     ],
   };
-  await setDoc(doc(db, C_PROPRIETAIRE, "proprietaire"), def);
-  return def;
+  await setDoc(doc(db, COLLECTIONS.proprietaire, "proprietaire"), defaut);
+  return defaut;
 }
 
 export async function updateProprietaire(champs) {
-  const ref = doc(db, C_PROPRIETAIRE, "proprietaire");
-  await updateDoc(ref, { ...champs, updatedAt: serverTimestamp() });
-  const s = await getDoc(ref);
-  return { id: s.id, ...s.data() };
+  await updateDoc(doc(db, COLLECTIONS.proprietaire, "proprietaire"), {
+    ...champs,
+    updatedAt: serverTimestamp(),
+  });
+  return lireUn(COLLECTIONS.proprietaire, "proprietaire");
 }
 
-// --- Immeubles
-export async function listImmeubles() {
-  return getCollection(C_IMMEUBLES);
-}
-export async function getImmeuble(id) {
-  return getById(C_IMMEUBLES, id);
-}
+// --- Immeubles ---
+
+export const listImmeubles = () => lireCollection(COLLECTIONS.immeubles);
+export const getImmeuble = (id) => lireUn(COLLECTIONS.immeubles, id);
+
 export async function createImmeuble(data) {
-  const ref = await addDoc(collection(db, C_IMMEUBLES), { ...data, createdAt: serverTimestamp() });
-  return ref.id;
+  const id = data.id || nextId("imm");
+  await setDoc(doc(db, COLLECTIONS.immeubles, id), { ...data, id });
+  return lireUn(COLLECTIONS.immeubles, id);
 }
+
 export async function updateImmeuble(id, data) {
-  await updateDoc(doc(db, C_IMMEUBLES, id), { ...data, updatedAt: serverTimestamp() });
-  return id;
+  await updateDoc(doc(db, COLLECTIONS.immeubles, id), { ...data, updatedAt: serverTimestamp() });
+  return lireUn(COLLECTIONS.immeubles, id);
 }
+
 export async function deleteImmeuble(id) {
-  await deleteDoc(doc(db, C_IMMEUBLES, id));
+  await deleteDoc(doc(db, COLLECTIONS.immeubles, id));
 }
 
-// --- Lots
-export async function listLots() {
-  return getCollection(C_LOTS);
-}
-export async function getLot(id) {
-  return getById(C_LOTS, id);
-}
+// --- Lots ---
+
+export const listLots = () => lireCollection(COLLECTIONS.lots);
+export const getLot = (id) => lireUn(COLLECTIONS.lots, id);
+
 export async function createLot(data) {
-  const ref = await addDoc(collection(db, C_LOTS), { ...data, createdAt: serverTimestamp() });
-  return ref.id;
+  const id = data.id || nextId("lot");
+  await setDoc(doc(db, COLLECTIONS.lots, id), { ...data, id });
+  return lireUn(COLLECTIONS.lots, id);
 }
+
 export async function updateLot(id, data) {
-  await updateDoc(doc(db, C_LOTS, id), { ...data, updatedAt: serverTimestamp() });
-  return id;
+  await updateDoc(doc(db, COLLECTIONS.lots, id), { ...data, updatedAt: serverTimestamp() });
+  return lireUn(COLLECTIONS.lots, id);
 }
+
 export async function deleteLot(id) {
-  await deleteDoc(doc(db, C_LOTS, id));
+  await deleteDoc(doc(db, COLLECTIONS.lots, id));
 }
 
-// --- Locataires
-export async function listLocataires() {
-  return getCollection(C_LOCATAIRES);
-}
-export async function getLocataire(id) {
-  return getById(C_LOCATAIRES, id);
-}
+// --- Locataires ---
+
+export const listLocataires = () => lireCollection(COLLECTIONS.locataires);
+export const getLocataire = (id) => lireUn(COLLECTIONS.locataires, id);
+
 export async function createLocataire(data) {
-  const ref = await addDoc(collection(db, C_LOCATAIRES), { ...data, createdAt: serverTimestamp() });
-  return ref.id;
+  const id = data.id || nextId("loc");
+  await setDoc(doc(db, COLLECTIONS.locataires, id), { ...data, id });
+  return lireUn(COLLECTIONS.locataires, id);
 }
+
 export async function updateLocataire(id, data) {
-  await updateDoc(doc(db, C_LOCATAIRES, id), { ...data, updatedAt: serverTimestamp() });
-  return id;
+  await updateDoc(doc(db, COLLECTIONS.locataires, id), { ...data, updatedAt: serverTimestamp() });
+  return lireUn(COLLECTIONS.locataires, id);
 }
+
 export async function deleteLocataire(id) {
-  await deleteDoc(doc(db, C_LOCATAIRES, id));
+  await deleteDoc(doc(db, COLLECTIONS.locataires, id));
 }
 
-// --- Baux
-export async function listBaux() {
-  return getCollection(C_BAUX);
-}
-export async function getBail(id) {
-  return getById(C_BAUX, id);
-}
+// --- Baux ---
+
+export const listBaux = () => lireCollection(COLLECTIONS.baux);
+export const getBail = (id) => lireUn(COLLECTIONS.baux, id);
+
 export async function createBail(data) {
-  const ref = await addDoc(collection(db, C_BAUX), { ...data, createdAt: serverTimestamp() });
-  return ref.id;
+  const id = data.id || nextId("bail");
+  await setDoc(doc(db, COLLECTIONS.baux, id), { ...data, id });
+  return lireUn(COLLECTIONS.baux, id);
 }
+
 export async function updateBail(id, data) {
-  await updateDoc(doc(db, C_BAUX, id), { ...data, updatedAt: serverTimestamp() });
-  return id;
+  await updateDoc(doc(db, COLLECTIONS.baux, id), { ...data, updatedAt: serverTimestamp() });
+  return lireUn(COLLECTIONS.baux, id);
 }
+
 export async function deleteBail(id) {
-  await deleteDoc(doc(db, C_BAUX, id));
+  await deleteDoc(doc(db, COLLECTIONS.baux, id));
 }
 
-// --- Loyers
-export async function listLoyers() {
-  return getCollection(C_LOYERS);
-}
+// --- Dépenses ---
 
-export async function getLoyer(id) {
-  return getById(C_LOYERS, id);
-}
+export const listDepenses = () => lireCollection(COLLECTIONS.depenses);
 
-export async function saveLoyer(data, id = null) {
-  if (id) {
-    await updateDoc(doc(db, C_LOYERS, id), { ...data, updatedAt: serverTimestamp() });
-    return id;
-  }
-  const ref = await addDoc(collection(db, C_LOYERS), { ...data, createdAt: serverTimestamp() });
-  return ref.id;
-}
-
-export async function deleteLoyer(id) {
-  await deleteDoc(doc(db, C_LOYERS, id));
-}
-
-// --- Dépenses
-export async function listDepenses() {
-  return getCollection(C_DEPENSES);
-}
 export async function createDepense(data) {
-  const ref = await addDoc(collection(db, C_DEPENSES), { ...data, createdAt: serverTimestamp() });
-  return ref.id;
+  const id = data.id || nextId("dep");
+  await setDoc(doc(db, COLLECTIONS.depenses, id), { ...data, id });
+  return lireUn(COLLECTIONS.depenses, id);
 }
+
 export async function updateDepense(id, data) {
-  await updateDoc(doc(db, C_DEPENSES, id), { ...data, updatedAt: serverTimestamp() });
-  return id;
+  await updateDoc(doc(db, COLLECTIONS.depenses, id), { ...data, updatedAt: serverTimestamp() });
+  return lireUn(COLLECTIONS.depenses, id);
 }
+
 export async function deleteDepense(id) {
-  await deleteDoc(doc(db, C_DEPENSES, id));
+  await deleteDoc(doc(db, COLLECTIONS.depenses, id));
 }
 
-// --- Paiements & Quittances (minimal helpers)
-export async function listPaiements() {
-  return getCollection(C_PAIEMENTS);
-}
-export async function listQuittances() {
-  return getCollection(C_QUITTANCES);
+// --- Loyers ---
+
+export const listLoyers = () => lireCollection(COLLECTIONS.loyers);
+
+/** Un loyer est-il déjà soldé, partiellement réglé, ou impayé ? */
+export async function recomputeStatutLoyers(loyerIds) {
+  if (!loyerIds.length) return;
+  const paiements = await lireCollection(COLLECTIONS.paiements);
+  await Promise.all(
+    loyerIds.map(async (loyerId) => {
+      const loyer = await lireUn(COLLECTIONS.loyers, loyerId);
+      if (!loyer) return;
+      const paye = paiements
+        .filter((p) => (p.allocations || []).some((a) => a.loyerId === loyerId))
+        .reduce((s, p) => s + p.allocations.find((a) => a.loyerId === loyerId).montant, 0);
+      const statut = statutPour(paye, loyer.montantDu);
+      if (statut !== loyer.statut) {
+        await updateDoc(doc(db, COLLECTIONS.loyers, loyerId), { statut });
+      }
+    })
+  );
 }
 
-async function nextNumeroQuittance() {
+/**
+ * Crée les loyers manquants pour une période. Idempotent.
+ * @returns {number} nombre de loyers créés
+ */
+export async function genererLoyersPourPeriode(periode, bailIds = null, { jusquA = true } = {}) {
+  const baux = bailIds
+    ? await Promise.all(bailIds.map((id) => lireUn(COLLECTIONS.baux, id)))
+    : await lireCollection(COLLECTIONS.baux);
+  const existants = await lireCollection(COLLECTIONS.loyers);
+
+  let crees = 0;
+  for (const bail of baux.filter(Boolean)) {
+    const couvert = jusquA ? bailActifCouvre(bail, periode) : bailCouvre(bail, periode, Infinity);
+    if (!couvert) continue;
+    if (existants.some((l) => l.bailId === bail.id && l.periode === periode)) continue;
+    const postes = fraisDefautBail(bail);
+    const loyer = {
+      id: nextId("loy"),
+      bailId: bail.id,
+      periode,
+      ...postes,
+      loyer: bail.loyerMensuel,
+      montantDu: bail.loyerMensuel + totalPostes(postes),
+      statut: "impaye",
+    };
+    await setDoc(doc(db, COLLECTIONS.loyers, loyer.id), loyer);
+    crees += 1;
+  }
+  return crees;
+}
+
+/**
+ * Génère les loyers dus depuis une période donnée.
+ *
+ * La borne haute est celle du bail (ou la période du jour) : un bail qui finit
+ * dans le futur doit voir ses échéances générées jusqu'à sa fin, pas seulement
+ * jusqu'à aujourd'hui — sinon le récapitulatif d'un bail longue durée afficherait
+ * un impayé sur des mois qui n'ont pas encore eu lieu.
+ *
+ * @param {string} bailId
+ * @param {string} [periodeDebut]  première période, celle du début du bail par défaut
+ * @param {string} [periodeFin]    dernière période à générer
+ * @returns {Promise<number>} nombre de loyers créés
+ */
+export async function genererLoyersDepuis(bailId, periodeDebut, periodeFin = null) {
+  const bail = await lireUn(COLLECTIONS.baux, bailId);
+  if (!bail) return 0;
+  const debut = (periodeDebut || periodeDebutBail(bail)).slice(0, 7);
+  const borne = periodeFin
+    ? periodeFin.slice(0, 7)
+    : periodeFinBail(bail, periodeCourante());
+
+  let cur = debut;
+  let crees = 0;
+  // Garde-fou : dix ans de bail. Au-delà la boucle ne s'arrêterait pas d'elle-même
+  // et le navigateur gèlerait ; mieux vaut s'arrêter que bloquer l'écran.
+  for (let garde = 0; garde < 120; garde += 1) {
+    if (comparePeriode(cur, borne) > 0) break;
+    crees += await genererLoyersPourPeriode(cur, [bailId], { jusquA: false });
+    cur = periodeDecalee(cur, 1);
+  }
+  return crees;
+}
+
+// --- Encaissement ---
+
+/**
+ * Enregistre un paiement et l'impute aux loyers désignés.
+ *
+ * Toute la partie calculée ici est exécutée dans une transaction Firestore :
+ * deux encaissements ouverts en même temps ne peuvent donc pas imputer le même
+ * mois ni dépasser le reste à payer. C'est le point sur lequel une gestion
+ * locative ne pardonne pas l'approximation — un loyer marqué soldé deux fois,
+ * c'est un mois de loyer perdu pour le propriétaire.
+ *
+ * @param {object} data { bailId, date, montant, mode, reference, allocations, detail, libelles, note }
+ * @returns {Promise<{paiement: object, quittance: null}>}
+ */
+export async function enregistrerPaiement(data) {
+  const bail = await lireUn(COLLECTIONS.baux, data.bailId);
+  if (!bail) throw new Error("Bail introuvable");
+
+  const allocations = (data.allocations || []).filter((a) => a.montant > 0);
+  if (allocations.length === 0) throw new Error("Sélectionnez au moins un mois à régler");
+  if (allocations.some((a) => !Number.isSafeInteger(a.montant))) {
+    throw new Error("Les montants affectés doivent être des nombres entiers");
+  }
+  if (new Set(allocations.map((a) => a.loyerId)).size !== allocations.length) {
+    throw new Error("Un mois ne peut être sélectionné qu'une seule fois");
+  }
+
+  const detail = data.detail
+    ? Object.fromEntries(
+        POSTES_FRAIS.map((p) => [p.key, Math.max(0, Math.round(Number(data.detail[p.key]) || 0))])
+      )
+    : null;
+  if (detail && detail.loyer <= 0) throw new Error("Le loyer doit être supérieur à zéro");
+
+  let montant = Math.round(Number(data.montant) || 0);
+  if (detail) {
+    for (const alloc of allocations) {
+      const loyer = await lireUn(COLLECTIONS.loyers, alloc.loyerId);
+      if (loyer) await updateDoc(doc(db, COLLECTIONS.loyers, loyer.id), appliquerDetailLoyer(loyer, detail));
+    }
+    montant = allocations.reduce((s, a) => s + a.montant, 0);
+  }
+  if (!Number.isSafeInteger(montant) || montant <= 0) {
+    throw new Error("Le montant doit être un entier supérieur à zéro");
+  }
+
+  const totalAlloue = allocations.reduce((s, a) => s + a.montant, 0);
+  if (totalAlloue > montant) throw new Error("Les mois sélectionnés dépassent le montant reçu");
+
+  const paiements = await lireCollection(COLLECTIONS.paiements);
+  for (const alloc of allocations) {
+    const loyer = await lireUn(COLLECTIONS.loyers, alloc.loyerId);
+    if (!loyer) throw new Error("Loyer introuvable dans l'allocation");
+    if (loyer.bailId !== bail.id) throw new Error("Un loyer ne peut pas être imputé à un autre bail");
+    const dejaPaye = totalAllouePourLoyer(paiements, loyer.id, data.paiementIdExistant);
+    const reste = loyer.montantDu - dejaPaye;
+    if (alloc.montant > reste) {
+      throw new Error(`Montant trop élevé pour ${loyer.periode} : il reste ${reste} FCFA à payer`);
+    }
+  }
+
+  let avance = montant - totalAlloue;
+  const periodesChoisies = [];
+  for (const alloc of allocations) {
+    const loyer = await lireUn(COLLECTIONS.loyers, alloc.loyerId);
+    periodesChoisies.push(loyer?.periode || periodeDebutBail(bail));
+  }
+  let periode = periodesChoisies.sort().at(-1) || periodeDebutBail(bail);
+  const periodesAvance = [];
+
+  for (let garde = 0; avance > 0 && garde < 600; garde += 1) {
+    periode = periodeDecalee(periode, 1);
+    if (!bailCouvre(bail, periode, Infinity)) {
+      throw new Error("La date de fin du bail ne permet pas d'affecter toute l'avance aux mois suivants");
+    }
+    const loyerExistant = await lireLoyerDeBail(bail.id, periode);
+    const montantDu = loyerExistant?.montantDu ?? Number(bail.loyerMensuel);
+    const dejaPaye = loyerExistant ? totalAllouePourLoyer(paiements, loyerExistant.id) : 0;
+    const reste = montantDu - dejaPaye;
+    if (reste <= 0) continue;
+    if (!Number.isSafeInteger(reste) || reste < 0) throw new Error("Montant du mois suivant invalide");
+    const montantAffecte = Math.min(avance, reste);
+    periodesAvance.push({ periode, montant: montantAffecte });
+    avance -= montantAffecte;
+  }
+  if (avance > 0) throw new Error("Impossible d'affecter toute l'avance sur la durée restante du bail");
+
+  for (const a of periodesAvance) {
+    await genererLoyersPourPeriode(a.periode, [bail.id], { jusquA: false });
+    const loyer = await lireLoyerDeBail(bail.id, a.periode);
+    if (!loyer) throw new Error(`Impossible de générer le loyer de ${a.periode}`);
+    allocations.push({ loyerId: loyer.id, montant: a.montant });
+  }
+
+  const paiement = {
+    id: nextId("pay"),
+    bailId: bail.id,
+    locataireId: bail.locataireId,
+    date: data.date,
+    montant,
+    mode: data.mode || "especes",
+    reference: data.reference || "",
+    note: data.note || "",
+    detail: detail ? dupliquer(detail) : null,
+    libelles: data.libelles ? dupliquer(data.libelles) : null,
+    allocations: allocations.map((a, i) => ({
+      loyerId: a.loyerId,
+      montant: Math.round(a.montant),
+      detail: i === 0 && detail ? dupliquer(detail) : null,
+    })),
+    createdAt: serverTimestamp(),
+  };
+
+  await setDoc(doc(db, COLLECTIONS.paiements, paiement.id), paiement);
+  await recomputeStatutLoyers(allocations.map((a) => a.loyerId));
+  return { paiement, quittance: null };
+}
+
+async function lireLoyerDeBail(bailId, periode) {
+  const snap = await getDocs(collection(db, COLLECTIONS.loyers));
+  const found = snap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .find((l) => l.bailId === bailId && l.periode === periode);
+  return found || null;
+}
+
+// --- Quittances ---
+
+export const listQuittances = () => lireCollection(COLLECTIONS.quittances);
+export const listPaiements = () => lireCollection(COLLECTIONS.paiements);
+
+export async function getPaiement(id) {
+  return lireUn(COLLECTIONS.paiements, id);
+}
+
+export async function deletePaiement(id) {
+  await deleteDoc(doc(db, COLLECTIONS.paiements, id));
+}
+
+/**
+ * Numéro séquentiel dans une transaction.
+ *
+ * Un compteur naïf (`nombre de quittances + 1`) produit deux fois le même
+ * numéro dès que deux fenêtres émettent au même instant — et un reçu numéroté
+ * en double n'a plus de valeur. La transaction sérialise les lectures et
+ * l'écriture du compteur.
+ */
+async function prochainNumeroQuittance() {
   return runTransaction(db, async (tx) => {
-    const ref = doc(db, C_COUNTERS, "quittances");
+    const ref = doc(db, "counters", "quittances");
     const snap = await tx.get(ref);
-    let n = 1;
-    if (snap.exists()) n = (snap.data().value || 0) + 1;
-    tx.set(ref, { value: n, updatedAt: serverTimestamp() }, { merge: true });
+    const valeur = (snap.exists() ? snap.data().value || 0 : 0) + 1;
+    tx.set(ref, { value: valeur }, { merge: true });
     const annee = new Date().getFullYear();
-    return `Q-${annee}-${String(n).padStart(6, "0")}`;
+    return { valeur, numero: `Q-${annee}-${String(valeur).padStart(6, "0")}` };
   });
 }
 
-export async function enregistrerPaiement(data) {
-  const ref = await addDoc(collection(db, C_PAIEMENTS), { ...data, createdAt: serverTimestamp() });
-  return ref.id;
-}
-
+/**
+ * Émet la quittance d'un paiement. Les mentions sont figées ici : la quittance
+ * doit rester identique même si le bail ou les frais changent plus tard.
+ */
 export async function genererQuittance(paiementId) {
-  const p = await getById(C_PAIEMENTS, paiementId);
-  if (!p) throw new Error("Paiement introuvable");
-  const numero = await nextNumeroQuittance();
-  const q = {
-    id: nextId("quittance"),
-    paiementId,
-    bailId: p.bailId,
-    locataireId: p.locataireId,
-    periode: p.periode,
-    montant: p.montant,
-    datePaiement: p.date,
-    dateEmission: new Date().toISOString().slice(0, 10),
+  const paiement = await lireUn(COLLECTIONS.paiements, paiementId);
+  if (!paiement) throw new Error("Paiement introuvable");
+
+  const bail = await lireUn(COLLECTIONS.baux, paiement.bailId);
+  const locataire = bail
+    ? await lireUn(COLLECTIONS.locataires, bail.locataireId)
+    : null;
+  const proprietaire = await getProprietaire();
+  const { numero, valeur } = await prochainNumeroQuittance();
+  const annee = Number(String(numero).slice(2, 6));
+
+  const quittance = {
+    id: `quittance_${numero}`,
     numero,
-    nomLocataire: p.nomLocataire || p.prenomsLocataire || "",
-    prenomsLocataire: p.prenomsLocataire || "",
-    nomProprietaire: p.nomProprietaire || "",
-    prenomsProprietaire: p.prenomsProprietaire || "",
-    ifuProprietaire: p.ifuProprietaire || "",
-    villeProprietaire: p.villeProprietaire || "Cotonou",
+    sequence: valeur,
+    annee,
+    paiementId,
+    bailId: paiement.bailId,
+    locataireId: paiement.locataireId,
+    periode: paiement.periode || periodeCourante(),
+    montant: paiement.montant,
+    datePaiement: paiement.date,
+    dateEmission: new Date().toISOString().slice(0, 10),
+    mode: paiement.mode || "especes",
+    detail: paiement.detail || null,
+    libelles: paiement.libelles || null,
+    allocations: paiement.allocations || [],
+    cautionSur: bail?.cautionSur || "",
+    // Locataire et propriétaire figés à l'émission.
+    nomLocataire: locataire?.nom || "",
+    prenomsLocataire: locataire?.prenoms || "",
+    ifuLocataire: locataire?.ifu || "",
+    telephoneLocataire: locataire?.telephone || "",
+    nomProprietaire: proprietaire?.nom || "",
+    prenomsProprietaire: proprietaire?.prenoms || "",
+    ifuProprietaire: proprietaire?.ifu || "",
+    villeProprietaire: proprietaire?.ville || "Cotonou",
+    createdAt: serverTimestamp(),
   };
-  await setDoc(doc(db, C_QUITTANCES, q.id), { ...q, createdAt: serverTimestamp() });
-  return q;
+
+  await setDoc(doc(db, COLLECTIONS.quittances, quittance.id), quittance);
+  return quittance;
 }
 
+/** Émet les quittances manquantes, une fois par paiement. */
 export async function genererQuittancesManquantes() {
-  const paiements = await listPaiements();
-  const quittances = await listQuittances();
+  const [paiements, quittances] = await Promise.all([
+    lireCollection(COLLECTIONS.paiements),
+    lireCollection(COLLECTIONS.quittances),
+  ]);
   const deja = new Set(quittances.map((q) => q.paiementId));
+  const creees = [];
   for (const p of paiements) {
-    if (!deja.has(p.id)) {
-      await genererQuittance(p.id);
-    }
+    if (!deja.has(p.id)) creees.push(await genererQuittance(p.id));
   }
+  return creees;
 }
-export { genererLoyersDepuis, genererLoyersPourPeriode } from "./db";
-export { lignesPostesPour } from "./db";

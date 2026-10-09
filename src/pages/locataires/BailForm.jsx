@@ -146,7 +146,7 @@ cautionVersee: 0,
     return Object.keys(e).length === 0;
   };
 
-  const enregistrer = (e) => {
+  const enregistrer = async (e) => {
     e.preventDefault();
     if (!valider()) return;
 
@@ -156,7 +156,7 @@ cautionVersee: 0,
       return;
     }
 
-    const res = saveBail(
+    const res = await saveBail(
       {
         lotId: form.lotId,
         locataireId: id,
@@ -180,7 +180,7 @@ cautionVersee: Number(form.cautionVersee) || 0,
     // Reconstitution de l'historique : sans cela, le compte d'un locataire
     // entrant dans le passé est vide et le site paraît faux.
     if (genererHistorique && moisADebiter.length > 0) {
-      const gen = genererDepuis(res.resultat.id, form.dateDebut.slice(0, 7), form.dateFin || periodeCourante());
+      const gen = await genererDepuis(res.resultat.id, form.dateDebut.slice(0, 7), form.dateFin || periodeCourante());
       if (gen.ok) {
         addToast(
           gen.resultat > 0

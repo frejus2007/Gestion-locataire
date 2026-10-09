@@ -17,7 +17,7 @@ import { Check, Home, IdCard, FileSignature, KeyRound, Receipt } from "lucide-re
 import { Modal, Field, TextInput, Select, ErrorBanner } from "../../components/ui";
 import { useApp } from "../../context/AppContext";
 import { useToast } from "../../context/ToastContext";
-import { genererLoyersDepuis, postesALZero } from "../../data/db";
+import { postesALZero } from "../../data/db";
 import { formatMoney, periodeCourante } from "../../utils/format";
 
 const AUJOURDHUI = new Date().toISOString().slice(0, 10);
@@ -62,6 +62,7 @@ export default function EnregistrerLocataire({ onClose, onEnregistre }) {
     saveLocataire,
     saveLot,
     saveBail,
+    genererDepuis,
   } = useApp();
   const { addToast } = useToast();
 
@@ -111,7 +112,7 @@ export default function EnregistrerLocataire({ onClose, onEnregistre }) {
   const loyerParDefaut =
     lotChoisi?.loyerReference || lotsLibres[0]?.loyerReference || "";
 
-  const enregistrer = () => {
+  const enregistrer = async () => {
     const e = {};
     if (!form.immeubleId) e.immeubleId = "Choisissez l'immeuble";
     if (form.lotId !== LOT_NEUF && !form.lotId) e.lotId = "Choisissez le logement";
@@ -192,7 +193,11 @@ export default function EnregistrerLocataire({ onClose, onEnregistre }) {
       // 4. Les loyers dus depuis l'entrée : sans eux, l'historique est vide.
       const debut = form.dateDebut.slice(0, 7);
       const fin = form.dateFin ? form.dateFin.slice(0, 7) : periodeCourante();
-      genererLoyersDepuis(bailId, debut, fin > periodeCourante() ? periodeCourante() : fin);
+      // Via le contexte, et non la couche de données : en mode Firebase un
+      // accès direct porterait sur la mémoire locale, et l'historique resterait
+      // vide après rechargement.
+      const rLoyers = await genererDepuis(bailId, debut);
+      if (!rLoyers.ok) throw new Error(rLoyers.erreur || "Les loyers n'ont pas pu être générés");
 
       addToast(
         `${form.prenoms.trim()} ${form.nom.trim()} enregistré — loyer ${formatMoney(loyer)}`,
