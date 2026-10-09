@@ -13,21 +13,25 @@ const firebaseConfig = {
   measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
 };
 
-// Initialize Firebase
-export const app = initializeApp(firebaseConfig);
-export const auth = getAuth(app);
-export const db = getFirestore(app);
-export const storage = getStorage(app);
+// L'import est fait par le pont d'authentification même en mode local, où
+// aucune configuration n'est renseignée : initialiser quand même produirait
+// une erreur bruyante au démarrage pour rien. On exporte donc des valeurs
+// nulles et les garde-fous se contentent de ne rien faire.
+export const configure = Boolean(firebaseConfig.apiKey && firebaseConfig.projectId);
 
-// Persist auth locally
-setPersistence(auth, browserLocalPersistence).catch(() => {
-  // ignore persistence errors in dev
-});
+export const app = configure ? initializeApp(firebaseConfig) : null;
+export const auth = configure ? getAuth(app) : null;
+export const db = configure ? getFirestore(app) : null;
+export const storage = configure ? getStorage(app) : null;
 
-// Enable offline persistence for Firestore
-if (typeof window !== "undefined") {
+if (configure) {
+  // Session conservée : on ne demande pas le mot de passe à chaque ouverture.
+  setPersistence(auth, browserLocalPersistence).catch(() => {
+    /* persistance refusée : sans conséquence, la session reste en mémoire */
+  });
+
+  // Hors-ligne : les données déjà consultées restent lisibles sans réseau.
   enableIndexedDbPersistence(db).catch((err) => {
-    // Multiple tabs open, or other reason — safe to ignore
-    console.warn("Firestore persistence not enabled:", err.code || err.message);
+    console.warn("Firestore hors-ligne indisponible :", err.code || err.message);
   });
 }
