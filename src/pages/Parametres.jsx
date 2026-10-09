@@ -97,8 +97,11 @@ export default function Parametres() {
       addToast("La confirmation ne correspond pas", "error");
       return;
     }
-    if (motsDePasse.nouveau.length < 4) {
-      addToast("Le mot de passe doit contenir au moins 4 caractères", "error");
+    // Six caractères : c'est le minimum accepté par Firebase en mode connecté.
+    // Valider à 4 ici laisserait passer un mot de passe que le serveur refuse
+    // ensuite, sans explication.
+    if (motsDePasse.nouveau.length < 6) {
+      addToast("Le mot de passe doit contenir au moins 6 caractères", "error");
       return;
     }
     const res = await changePassword(motsDePasse.actuel, motsDePasse.nouveau);

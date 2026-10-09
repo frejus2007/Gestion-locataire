@@ -1,0 +1,44 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    match /proprietaire/{doc} {
+      allow read, write: if isAuth();
+    }
+    match /immeubles/{doc} {
+      allow read, write: if isAuth();
+    }
+    match /lots/{doc} {
+      allow read, write: if isAuth();
+    }
+    match /locataires/{doc} {
+      allow read, write: if isAuth();
+    }
+    match /baux/{doc} {
+      allow read, write: if isAuth();
+    }
+    match /loyers/{doc} {
+      allow read, write: if isAuth();
+    }
+    match /paiements/{doc} {
+      allow read, write: if isAuth();
+    }
+    match /quittances/{doc} {
+      allow read, write: if isAuth();
+    }
+    match /depenses/{doc} {
+      allow read, write: if isAuth();
+    }
+    match /counters/{doc} {
+      allow read, write: if isAuth();
+    }
+
+    match /users/{uid} {
+      allow read: if isAuth() && request.auth.uid == uid;
+      allow write: if isAuth() && request.auth.uid == uid;
+    }
+  }
+}

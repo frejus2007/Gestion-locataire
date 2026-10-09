@@ -110,8 +110,8 @@ export function AuthProvider({ children }) {
     if (!actuel || String(actuel) !== motDePasseEnCours()) {
       return { ok: false, error: "Mot de passe actuel incorrect" };
     }
-    if (!nouveau || String(nouveau).length < 4) {
-      return { ok: false, error: "Le mot de passe doit contenir au moins 4 caractères" };
+    if (!nouveau || String(nouveau).length < 6) {
+      return { ok: false, error: "Le mot de passe doit contenir au moins 6 caractères" };
     }
     try {
       localStorage.setItem(PASSWORD_KEY, String(nouveau));
@@ -120,6 +120,17 @@ export function AuthProvider({ children }) {
       return { ok: false, error: "Impossible d'enregistrer le mot de passe sur cet appareil" };
     }
     return { ok: true };
+  }, []);
+
+  /**
+   * Pas d'envoi de lien en mode local : il n'y a pas de messagerie. On le dit
+   * franchement plutôt que d'afficher un succès trompeur.
+   */
+  const resetPassword = useCallback(async () => {
+    return {
+      ok: false,
+      error: "La réinitialisation par email n'est disponible qu'une fois le projet relié à Firebase.",
+    };
   }, []);
 
   return (
@@ -131,6 +142,7 @@ export function AuthProvider({ children }) {
         login,
         logout,
         changePassword,
+        resetPassword,
         defaultCredentials: DEFAULT_CREDENTIALS,
       }}
     >
