@@ -15,7 +15,7 @@ const ARGUMENTS = [
 ];
 
 export default function Login() {
-  const { login, resetPassword, defaultCredentials } = useAuth();
+  const { login, defaultCredentials } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -24,12 +24,10 @@ export default function Login() {
   const [erreur, setErreur] = useState("");
   const [chargement, setChargement] = useState(false);
   const [visible, setVisible] = useState(false);
-  const [renvoi, setRenvoi] = useState("");
 
   const soumettre = async (e) => {
     e.preventDefault();
     setErreur("");
-    setRenvoi("");
     setChargement(true);
     const res = await login(email, motDePasse);
     setChargement(false);
@@ -41,27 +39,7 @@ export default function Login() {
     }
   };
 
-  /**
-   * Oubli du mot de passe : Firebase envoie un lien à l'adresse du compte.
-   * Le message reste volontairement identique que l'adresse existe ou non —
-   * en dire davantage permettrait de découvrir quels comptes sont ouverts.
-   */
-  const oublier = async () => {
-    if (!email.trim()) {
-      setErreur("Saisissez d'abord votre adresse email");
-      return;
-    }
-    setChargement(true);
-    const res = await resetPassword(email.trim());
-    setChargement(false);
-    if (res?.ok) {
-      setRenvoi(
-        `Si un compte existe pour ${email.trim()}, un lien de réinitialisation vient d'être envoyé.`
-      );
-    } else {
-      setErreur(res?.error || "Réinitialisation impossible");
-    }
-  };
+
 
   return (
     <div className="login-split">
@@ -132,20 +110,10 @@ export default function Login() {
           </label>
 
           {erreur ? <div className="login-erreur">{erreur}</div> : null}
-          {renvoi ? <div className="login-erreur">{renvoi}</div> : null}
 
           <button type="submit" className="btn btn-primary login-bouton" disabled={chargement}>
             {chargement ? "Connexion…" : "Se connecter"}
             {!chargement ? <Check size={16} /> : null}
-          </button>
-
-          <button
-            type="button"
-            className="login-oubli"
-            onClick={oublier}
-            disabled={chargement}
-          >
-            Mot de passe oublié ?
           </button>
 
           {/* Les identifiants de démonstration n'existent qu'en mode local.

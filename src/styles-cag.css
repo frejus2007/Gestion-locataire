@@ -564,22 +564,6 @@ table.cag-releve tr.caution td { background: var(--primary-bg); }
 .login-bouton { width: 100%; padding: 0.8rem 1rem; font-size: 0.95rem; }
 .login-bouton:disabled { opacity: 0.7; cursor: progress; }
 
-/* Lien discret sous le bouton : présent, jamais dominant. */
-.login-oubli {
-  display: block;
-  margin: 0.75rem auto 0;
-  padding: 0.2rem 0.4rem;
-  background: none;
-  border: 0;
-  color: var(--primary);
-  font-size: 0.82rem;
-  font-weight: 600;
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  cursor: pointer;
-}
-.login-oubli:disabled { opacity: 0.6; cursor: progress; }
-.login-oubli:hover { color: var(--primary-dark); }
 .login-aide {
   margin: 1.2rem 0 0;
   text-align: center;

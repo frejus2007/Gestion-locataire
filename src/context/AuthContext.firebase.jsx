@@ -3,7 +3,6 @@ import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
   signOut,
-  sendPasswordResetEmail,
   updatePassword,
   reauthenticateWithCredential,
   EmailAuthProvider,
@@ -73,11 +72,6 @@ export function AuthProviderFirebase({ children }) {
     setUser(null);
   }, []);
 
-  const resetPassword = useCallback(async (email) => {
-    await sendPasswordResetEmail(auth, email);
-    return { ok: true };
-  }, []);
-
   /**
    * Change le mot de passe du compte connecté.
    *
@@ -120,7 +114,6 @@ export function AuthProviderFirebase({ children }) {
         login,
         logout,
         changePassword,
-        resetPassword,
         // Pas de compte de démonstration en mode connecté : l'écran de
         // connexion s'en sert pour pré-remplir le champ et afficher l'aide.
         // Sans cet objet, la page planterait sur `defaultCredentials.email`.
