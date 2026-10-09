@@ -1,0 +1,3 @@
+# Tout chemin non fichier est renvoyé vers index.html : le routeur React
+# résout l'URL. Sans cela, recharger /paiements depuis Netlify répond 404.
+/*    /index.html   200

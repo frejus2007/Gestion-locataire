@@ -1,0 +1,28 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+# Application à page unique : le routeur React gère les chemins. Sans ces
+# règles, un rechargement sur /paiements ou /locataires renvoie un 404
+# puisque le serveur cherche un fichier du même nom sur le disque.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Les fichiers générés par Vite portent une empreinte dans leur nom ; leur
+# contenu changeant à chaque build, ils ne doivent jamais être mis en cache
+# par le navigateur. index.html, lui, doit rester frais : c'est lui qui pointe
+# vers les nouveaux fichiers.
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+# Le fichier _redirects ci-dessus reste la source de vérité pour Netlify ; on
+# le conserve pour les déploiements déclenchés depuis l'interface.
