@@ -1,13 +1,13 @@
 # Intégration Firebase
 
 ## Configuration
-- Créer projet Firebase (Web)
-- Récupérer config dans .env.local (remplacer les valeurs)
-- Activer Authentication → Email/Password
-- Activer Firestore (mode production ou test)
-- Déployer règles Firestore minimales
+Ton .env.local est déjà créé avec tes valeurs.
 
-## Règles Firestore (exemple)
+## À faire dans Firebase Console
+1. **Authentication > Méthode de connexion** → Activer `Email/mot de passe`
+2. **Firestore Database** → Créer base de données (production ou test)
+3. **Règles Firestore** → Coller ces règles
+
 ```js
 rules_version = '2';
 service cloud.firestore {
@@ -28,12 +28,11 @@ service cloud.firestore {
 }
 ```
 
-## Basculer
-- Mode local: `VITE_USE_FIREBASE=false` (défaut)
-- Mode Firebase: `VITE_USE_FIREBASE=true` + config remplie
+4. **Authentication > Utilisateurs** → Ajouter un compte (email + mot de passe)
 
-## Aide côté utilisateur
-1. Créer projet Firebase
-2. Coller config dans `.env.local`
-3. Passer à `true` quand prêt
-4. Créer 1 compte dans Authentication
+## Lancer
+```bash
+npm run dev
+```
+
+Mode actuel : VITE_USE_FIREBASE=true
