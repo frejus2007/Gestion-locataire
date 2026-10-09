@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import { Inbox } from "lucide-react";
 
@@ -48,7 +49,13 @@ export function Modal({ title, onClose, children, footer, width }) {
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  return (
+  // La modale est montée dans un portail sur `document.body`. Rendue à sa
+  // place dans l'arbre React, elle se retrouve sous `.page-transition-wrapper`,
+  // dont l'animation laisse un `transform` : cet ancêtre devient alors le bloc
+  // conteneur du `position: fixed`, et l'overlay ne couvre plus que la zone
+  // de contenu au lieu de l'écran. Le formulaire d'encaissement, plus haut que
+  // l'écran, sortait donc par le haut. Le portail la rend au viewport.
+  const contenu = (
     <div className="modal-overlay" onClick={onClose} role="presentation">
       <div
         className="modal"
@@ -61,11 +68,17 @@ export function Modal({ title, onClose, children, footer, width }) {
         ref={ref}
       >
         <h3>{title}</h3>
-        {children}
+        {/* Le corps seul défile : le titre et les boutons restent à l'écran,
+            ce qui compte sur les formulaires CAGOUNOU, longs de plusieurs
+            sections. */}
+        <div className="modal-corps">{children}</div>
         {footer && <div className="modal-actions">{footer}</div>}
       </div>
     </div>
   );
+
+  if (typeof document === "undefined") return contenu;
+  return createPortal(contenu, document.body);
 }
 
 /** Confirmation avant une action destructive. */

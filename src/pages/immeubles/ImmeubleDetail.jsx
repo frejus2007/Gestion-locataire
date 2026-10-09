@@ -436,15 +436,7 @@ export default function ImmeubleDetail() {
       )}
 
       {/* Dépenses de l'immeuble : accès rapide depuis sa fiche. */}
-      <Card
-        title="Dépenses"
-        action={
-          <Link to="/depenses" className="btn btn-small btn-secondary">
-            <Wrench size={13} /> Voir tout
-          </Link>
-        }
-        style={{ marginTop: "1rem" }}
-      >
+      <Card title="Dépenses" style={{ marginTop: "1rem" }}>
         <DepensesImmeuble immeubleId={id} />
       </Card>
 

@@ -6,10 +6,10 @@
 // onSnapshot ; les sélecteurs resteront identiques.
 
 import { createContext, useContext, useState, useCallback, useMemo } from "react";
-import * as db from "../data/db";
+import { db } from "../utils/db-provider";
 import { comparePeriode, periodeCourante } from "../utils/format";
 
-const { CATEGORIES_DEPENSE, MOIS_DE_PAYEMENT } = db;
+const { CATEGORIES_DEPENSE, MOIS_DE_PAYEMENT, LIGNES_FRAIS } = db;
 
 const AppContext = createContext(null);
 
@@ -87,7 +87,6 @@ export function AppProvider({ children }) {
       genererDepuis: (bailId, periodeDebut) =>
         run(() => db.genererLoyersDepuis(bailId, periodeDebut)),
       genererPeriode: (periode) => run(() => db.genererLoyersPourPeriode(periode)),
-      saveLoyer: (id, data) => run(() => db.updateLoyer(id, data)),
 
       // Paiements
       enregistrerPaiement: (data) => run(() => db.enregistrerPaiement(data)),
@@ -114,6 +113,8 @@ export function AppProvider({ children }) {
       ...actions,
       CATEGORIES: CATEGORIES_DEPENSE,
       MODES: MOIS_DE_PAYEMENT,
+      // Sept lignes d'un encaissement (loyer, eau, électricité, ordures…).
+      LIGNES: LIGNES_FRAIS,
       loading,
       erreur,
       setErreur,
@@ -212,6 +213,8 @@ export function createSelecteurs(donnees) {
       .filter((b) => b.lotId === lotId)
       .sort((a, b) => b.dateDebut.localeCompare(a.dateDebut));
 
+  // Les baux d'un locataire, du plus récent au plus ancien. Sert aussi à
+  // résoudre un identifiant de locataire en bail dans la page Compte.
   const bauxDuLocataire = (locataireId) =>
     baux
       .filter((b) => b.locataireId === locataireId)
@@ -335,6 +338,7 @@ export function createSelecteurs(donnees) {
 
   return {
     // Accès directs
+    baux,
     bauxParId,
     lotsParId,
     immeublesParId,

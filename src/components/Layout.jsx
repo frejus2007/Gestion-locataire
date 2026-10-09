@@ -8,48 +8,41 @@ import {
   Building2,
   Users,
   Wallet,
-  Receipt,
-  BookOpen,
-  Wrench,
   Settings,
   Menu,
   X,
   Moon,
   Sun,
   AlertTriangle,
-  RotateCw,
   LogOut,
 } from "lucide-react";
 import { useApp } from "../context/AppContext";
+import BoutonInstaller from "./BoutonInstaller";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 
 const NAVIGATION = [
   { section: "Pilotage" },
   { to: "/", label: "Tableau de bord", icon: LayoutDashboard, end: true },
-  { to: "/journal", label: "Journal mensuel", icon: BookOpen },
   { section: "Patrimoine" },
   { to: "/immeubles", label: "Immeubles", icon: Building2 },
   { to: "/locataires", label: "Locataires", icon: Users },
   { section: "Finances" },
-  { to: "/paiements", label: "Versements", icon: Wallet },
-  { to: "/quittances", label: "Quittances", icon: Receipt },
-  { to: "/depenses", label: "Dépenses", icon: Wrench },
+  { to: "/paiements", label: "Paiements & Quittances", icon: Wallet },
 ];
 
 const NAV_MOBILE = [
   { to: "/", label: "Accueil", icon: LayoutDashboard, end: true },
   { to: "/immeubles", label: "Immeubles", icon: Building2 },
-  { to: "/paiements", label: "Versements", icon: Wallet },
-  { to: "/quittances", label: "Quittances", icon: Receipt },
+  { to: "/locataires", label: "Locataires", icon: Users },
+  { to: "/paiements", label: "Paiements", icon: Wallet },
 ];
 
 export default function Layout() {
   const [menuOuvert, setMenuOuvert] = useState(false);
   const [sombre, setSombre] = useState(() => localStorage.getItem("theme") === "dark");
-  const [syncing, setSyncing] = useState(false);
-  const { impayesGlobaux, proprietaire } = useApp();
-  const { user, logout } = useAuth();
+  const { impayesGlobaux } = useApp();
+  const { logout } = useAuth();
   const { addToast } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
@@ -66,22 +59,10 @@ export default function Layout() {
   };
 
   const nbImpayes = impayesGlobaux().length;
-  const userNom = user?.nom || proprietaire?.nom || "KOUASSI";
-  const userPrenoms = user?.prenoms || proprietaire?.prenoms || "Jean-Marc";
-  const initiales = `${userPrenoms[0] || "J"}${userNom[0] || "K"}`.toUpperCase();
-  const nomComplet = [userPrenoms, userNom].filter(Boolean).join(" ");
-  const userRole = user?.role || "Bailleur gestionnaire";
 
   // Le menu se referme dès qu'on change de page : pas d'effet nécessaire,
   // l'événement de navigation suffit à déclencher le re-rendu.
   const fermer = () => setMenuOuvert(false);
-
-  const handleSync = () => {
-    if (syncing) return;
-    setSyncing(true);
-    window.dispatchEvent(new CustomEvent("cag:reconnect"));
-    setTimeout(() => setSyncing(false), 850);
-  };
 
   // Rendu direct plutôt qu'un sous-composant : évite de recréer un composant
   // à chaque rendu, ce qui perdrait son état interne.
@@ -114,10 +95,10 @@ export default function Layout() {
       <aside className={`sidebar ${menuOuvert ? "open" : ""}`}>
         <Link to="/" className="sidebar-brand" onClick={fermer}>
           <div className="brand-logo-container">
-            <img src="/logo-cag.png" alt="Cabinet Albert & Gilles" className="brand-logo" />
+            <img src="/logo-cag.png" alt="Chabi Arnaud GOUNOU" className="brand-logo" />
           </div>
           <div className="brand-text">
-            <span className="brand-name">Cabinet Albert & Gilles</span>
+            <span className="brand-name">Chabi Arnaud GOUNOU</span>
             <span className="brand-tagline">Gestion Locative</span>
           </div>
         </Link>
@@ -125,33 +106,9 @@ export default function Layout() {
         <nav className="sidebar-nav">{liens}</nav>
 
         <div className="sidebar-footer">
-          <div className="sidebar-profile-card">
-            <Link
-              to="/parametres"
-              className="sidebar-profile-info"
-              onClick={fermer}
-              title="Voir les paramètres du bailleur"
-            >
-              <div className="sidebar-avatar-wrapper">
-                <div className="sidebar-avatar">{initiales}</div>
-                <span className="sidebar-avatar-status" title="Session locale active" />
-              </div>
-              <div className="sidebar-user-details">
-                <strong className="sidebar-user-name" title={nomComplet}>{nomComplet}</strong>
-                <span className="sidebar-user-role">{userRole}</span>
-              </div>
-            </Link>
-            <button
-              type="button"
-              className="btn-icon-subtle sidebar-sync-btn"
-              onClick={handleSync}
-              title="Synchroniser / Animation de démarrage"
-              aria-label="Recharger"
-            >
-              <RotateCw size={14} className={syncing ? "spin-sync" : ""} />
-            </button>
-          </div>
-
+          {/* La carte d'identité du bailleur a été retirée : elle prenait une
+              place utile dans la barre latérale sans rien apprendre que les
+              paramètres ne disent. La déconnexion reste en bas de la barre. */}
           <div className="sidebar-footer-actions">
             <NavLink
               to="/parametres"
@@ -202,6 +159,8 @@ export default function Layout() {
         <img src="/logo-cag.png" alt="CAG" className="topbar-logo" />
         <span className="topbar-title">Gestion locative</span>
         <div className="spacer" />
+        <BoutonInstaller variante="icone" />
+
         {nbImpayes > 0 && (
           <span className="badge badge-red" title={`${nbImpayes} locataire(s) en impayé`}>
             <AlertTriangle size={12} style={{ verticalAlign: -1, marginRight: 3 }} />

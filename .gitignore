@@ -30,3 +30,6 @@ dist-ssr
 
 # Scripts de developpement
 .test-loader.mjs
+
+# Apercus produits par les scripts de verification
+apercu-quittance.pdf

@@ -27,10 +27,16 @@ const NATURES_PIECE = [
 ];
 
 export default function LocataireForm() {
-  const { id } = useParams();
+  const { id: idRoute } = useParams();
   const navigate = useNavigate();
-  const { locatairesParId, saveLocataire } = useApp();
+  const { bauxParId, locatairesParId, saveLocataire } = useApp();
   const { addToast } = useToast();
+
+  // Comme la page Compte, cette route arrive avec deux sortes d'identifiants :
+  // un bail depuis la liste des locataires, un locataire depuis le formulaire de
+  // bail et les liens d'édition. On résout le bail vers son locataire pour que
+  // « Éditer » fonctionne aussi.
+  const id = bauxParId.get(idRoute) ? bauxParId.get(idRoute).locataireId : idRoute;
 
   const existant = id ? locatairesParId.get(id) : null;
   const [form, setForm] = useState(() => (existant ? { ...existant } : { ...VIDE }));

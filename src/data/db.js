@@ -7,7 +7,7 @@
 //
 // Sémantique des montants : ce sont toujours des entiers en FCFA.
 
-import { periodeCourante, periodeDecalee, comparePeriode } from "../utils/format.js";
+import { periodeCourante, periodeDecalee, comparePeriode, periodeToLabel } from "../utils/format.js";
 
 // --- Compteur d'identifiants ---
 
@@ -32,6 +32,14 @@ function jeuDeDemo() {
     ifu: "3202100123456",
     banque: "Ecobank Benin — 0100 4500 1234 56",
     signatureUrl: null,
+    // Numéros sur lesquels les locataires envoient leurs loyers.
+    // Liste libre : on peut en ajouter autant que nécessaire (MTN MoMo,
+    // Moov Money, Celtis…) ou en retirer. Ils sont rappelés sur la quittance.
+    reception: [
+      { reseau: "MTN MoMo", numero: "+229 97 12 34 56" },
+      { reseau: "Moov Money", numero: "" },
+      { reseau: "Celtis", numero: "" },
+    ],
   };
 
   const immeubles = [
@@ -58,11 +66,35 @@ function jeuDeDemo() {
 
   // Un bail qui démarre dans le passé (cas de mise en service) et un autre ancien,
   // pour que la génération rétroactive ait quelque chose à produire.
+  // `fraisDefaut` pré-remplit le bloc des sept lignes à chaque encaissement.
+  // Les charges réelles changent tous les mois : ce sont des valeurs de départ,
+  // que le propriétaire corrige au moment de l'encaissement.
   const baux = [
-    { id: "bail_1", lotId: "lot_1", locataireId: "loc_1", dateDebut: "2026-02-01", dateFin: null, loyerMensuel: 60000, cautionVersee: 100000, cautionStatut: "restituee", notes: "" },
-    { id: "bail_2", lotId: "lot_2", locataireId: "loc_2", dateDebut: "2025-09-01", dateFin: null, loyerMensuel: 60000, cautionVersee: 120000, cautionStatut: "restituee", notes: "Augmentation de 5 000 à la révision annuelle." },
-    { id: "bail_3", lotId: "lot_3", locataireId: "loc_3", dateDebut: "2026-06-01", dateFin: null, loyerMensuel: 75000, cautionVersee: 150000, cautionStatut: "restituee", notes: "" },
-    { id: "bail_4", lotId: "lot_5", locataireId: "loc_4", dateDebut: "2026-09-01", dateFin: null, loyerMensuel: 250000, cautionVersee: 500000, cautionStatut: "deposee", notes: "" },
+    {
+      id: "bail_1", lotId: "lot_1", locataireId: "loc_1",
+      dateDebut: "2026-02-01", dateFin: null, loyerMensuel: 60000,
+      cautionVersee: 100000, cautionStatut: "restituee", cautionSur: "", notes: "",
+      fraisDefaut: { eau: 3000, electricite: 4500, ordures: 1000, degats: 0, autre1: 0, autre2: 0 },
+    },
+    {
+      id: "bail_2", lotId: "lot_2", locataireId: "loc_2",
+      dateDebut: "2025-09-01", dateFin: null, loyerMensuel: 60000,
+      cautionVersee: 120000, cautionStatut: "restituee", cautionSur: "",
+      notes: "Augmentation de 5 000 à la révision annuelle.",
+      fraisDefaut: { eau: 2000, electricite: 3500, ordures: 1000, degats: 0, autre1: 500, autre2: 0, libelle1: "Frais de porte" },
+    },
+    {
+      id: "bail_3", lotId: "lot_3", locataireId: "loc_3",
+      dateDebut: "2026-06-01", dateFin: null, loyerMensuel: 75000,
+      cautionVersee: 150000, cautionStatut: "restituee", cautionSur: "", notes: "",
+      fraisDefaut: { eau: 4000, electricite: 6000, ordures: 1500, degats: 0, autre1: 0, autre2: 0 },
+    },
+    {
+      id: "bail_4", lotId: "lot_5", locataireId: "loc_4",
+      dateDebut: "2026-09-01", dateFin: null, loyerMensuel: 250000,
+      cautionVersee: 500000, cautionStatut: "deposee", cautionSur: "", notes: "",
+      fraisDefaut: { eau: 5000, electricite: 12000, ordures: 2000, degats: 0, autre1: 2500, autre2: 0, libelle2: "Gardiennage" },
+    },
   ];
 
   return { proprietaire, immeubles, lots, locataires, baux, loyers: [], paiements: [], depenses: [], quittances: [] };
@@ -76,6 +108,69 @@ export const MOIS_DE_PAYEMENT = [
   { id: "mobile", label: "Mobile Money" },
   { id: "cheque", label: "Chèque" },
 ];
+
+// Les postes d'une échéance mensuelle, dans l'ordre du relevé et de la quittance.
+//
+// `loyer` vient du bail et n'est pas une charge. Les autres postes se saisissent
+// mois par mois : les factures d'eau et d'électricité changent tous les mois,
+// la collecte des ordures non plus. Le propriétaire coche donc les postes
+// qu'il applique au mois concerné et en saisit le montant.
+//
+// Les postes `autre1` et `autre2` sont librement renommables : le client peut
+// écrire « Frais de porte » ou « Gardiennage » au lieu du libellé générique.
+export const LIGNES_FRAIS = [
+  { key: "loyer", label: "Loyer", defaut: true },
+  { key: "eau", label: "Eau" },
+  { key: "electricite", label: "Électricité" },
+  { key: "ordures", label: "Ordures ménagères" },
+  { key: "degats", label: "Dégâts" },
+  { key: "autre1", label: "Autre 1", libre: "libelle1" },
+  { key: "autre2", label: "Autre 2", libre: "libelle2" },
+];
+
+/** Clés des postes, dans l'ordre d'affichage. */
+export const POSTES_FRAIS = LIGNES_FRAIS.map((l) => l.key);
+
+/** Un loyer dont tous les postes sont à zéro. */
+export function postesALZero() {
+  return Object.fromEntries(POSTES_FRAIS.map((k) => [k, 0]));
+}
+
+/** Somme des postes d'une échéance : c'est le montant dû du mois. */
+export function totalPostes(loyer) {
+  return POSTES_FRAIS.reduce((s, k) => s + (Number(loyer?.[k]) || 0), 0);
+}
+
+/**
+ * Frais par défaut d'un bail : les valeurs proposées à la saisie d'un nouveau
+ * mois. Le loyer en est absent, il est porté par le bail.
+ */
+export function fraisDefautBail(bail) {
+  const src = bail?.fraisDefaut && typeof bail.fraisDefaut === "object" ? bail.fraisDefaut : {};
+  const d = postesALZero();
+  for (const l of LIGNES_FRAIS) {
+    if (l.key === "loyer") continue;
+    d[l.key] = Math.max(0, Math.round(Number(src[l.key]) || 0));
+  }
+  return d;
+}
+
+/**
+ * Libellés des postes renommables pour un bail donné.
+ * Renvoie { autre1: « Frais de porte », autre2: « Autre 2 » }.
+ */
+export function libellesPostes(bail) {
+  const f = bail?.fraisDefaut || {};
+  return Object.fromEntries(
+    LIGNES_FRAIS.filter((l) => l.libre).map((l) => [l.key, f[l.libre] || l.label])
+  );
+}
+
+/** Les postes avec leur libellé applicable à un bail, prêts à afficher. */
+export function lignesPostesPour(bail) {
+  const libres = libellesPostes(bail);
+  return LIGNES_FRAIS.map((l) => ({ ...l, label: libres[l.key] || l.label }));
+}
 
 export const CATEGORIES_DEPENSE = [
   { id: "entretien", label: "Entretien courant" },
@@ -229,7 +324,7 @@ export function createBail(data) {
     id: nextId("bail"),
     dateFin: null,
     cautionVersee: 0,
-    cautionStatut: "non-versee",
+    cautionStatut: "non-versee", cautionSur: "",
     notes: "",
     ...data,
   };
@@ -244,28 +339,24 @@ export function updateBail(id, data) {
   return dupliquer(db.baux[idx]);
 }
 
-export function updateLoyer(id, data) {
-  const idx = db.loyers.findIndex((l) => l.id === id);
-  if (idx < 0) return null;
-
-  const postes = ["loyer", "eau", "electricite", "orduresMenageres", "autre1", "autre2"];
+/**
+ * Écrit un détail de frais sur un loyer et recalcule son montant dû.
+ * Utilisé quand le propriétaire saisit les frais au moment de l'encaissement :
+ * le loyer porte alors la facture réellement appliquée à ce mois.
+ */
+function appliquerDetailLoyer(loyer, detail) {
   const montants = Object.fromEntries(
-    postes.map((poste) => {
-      const montant = Number(data[poste]);
-      if (!Number.isSafeInteger(montant) || montant < 0) {
-        throw new Error("Chaque montant doit être un nombre entier positif ou nul");
-      }
-      return [poste, montant];
-    })
+    POSTES_FRAIS.map((poste) => [
+      poste,
+      Math.max(0, Math.round(Number(detail[poste]) || 0)),
+    ])
   );
-  const montantDu = postes.reduce((total, poste) => total + montants[poste], 0);
-  if (!Number.isSafeInteger(montantDu)) {
-    throw new Error("Le total des frais dépasse le montant autorisé");
+  loyer.loyer = montants.loyer;
+  for (const poste of POSTES_FRAIS) {
+    if (poste !== "loyer") loyer[poste] = montants[poste];
   }
-
-  db.loyers[idx] = { ...db.loyers[idx], ...montants, montantDu };
-  recomputeStatutLoyers([id]);
-  return dupliquer(db.loyers[idx]);
+  loyer.montantDu = totalPostes(loyer);
+  return loyer;
 }
 
 // Supprime un bail et tout ce qui en dépend (loyers, paiements, quittances).
@@ -355,17 +446,19 @@ export function genererLoyersPourPeriode(periode, bailIds = null, { jusquA = tru
     if (!couvert) continue;
     const existe = db.loyers.some((l) => l.bailId === bail.id && l.periode === periode);
     if (existe) continue;
+    // L'échéance du mois part des frais par défaut du bail : le propriétaire
+    // n'aura plus qu'à corriger les postes qui ont changé (facture d'eau,
+    // compteur électrique) au moment de la saisie sur le relevé.
+    const postes = fraisDefautBail(bail);
     db.loyers.push({
       id: nextId("loy"),
       bailId: bail.id,
       periode,
+      // Le spread des postes ne doit pas écraser le loyer : il vient d'abord.
+      ...postes,
       loyer: bail.loyerMensuel,
-      eau: 0,
-      electricite: 0,
-      orduresMenageres: 0,
-      autre1: 0,
-      autre2: 0,
-      montantDu: bail.loyerMensuel,
+      // Le montant dû du mois est la somme des postes, charges comprises.
+      montantDu: bail.loyerMensuel + totalPostes(postes),
       // Le statut est dérivé, mais on le stocke pour éviter de recalculer
       // à chaque rendu ; il est réécrit par recomputeStatutLoyers().
       statut: "impaye",
@@ -379,6 +472,47 @@ export function genererLoyersPourPeriode(periode, bailIds = null, { jusquA = tru
  * Génère tous les loyers dus depuis une date jusqu'à la période courante.
  * Utilisé à la création d'un bail pour reconstituer l'historique.
  */
+/**
+ * Les sept lignes d'un loyer, telles qu'elles seront figées sur la quittance.
+ *
+ * L'eau et l'électricité varient un peu d'un mois à l'autre : on les fait
+ * dériver du montant réel du loyer, sinon toutes les quittances de la
+ * démonstration se ressembleraient. Un montant partiel met les montants à
+ * l'échelle du versement.
+ */
+function detailDuLoyer(bail, loyer, montantCible = null) {
+  const base = Object.fromEntries(
+    POSTES_FRAIS.map((poste) => [
+      poste,
+      poste === "loyer"
+        ? Number(loyer.loyer) || 0
+        : Number(loyer[poste]) || 0,
+    ])
+  );
+  const somme = POSTES_FRAIS.reduce((s, poste) => s + base[poste], 0);
+  if (!montantCible || somme <= 0 || montantCible >= somme) return base;
+
+  // Au prorata du versement. L'écart d'arrondi est posé sur la dernière ligne
+  // non nulle : l'ajuster sur une ligne à zéro perdrait la différence, et la
+  // somme des sept lignes ne tomberait plus juste.
+  const echelle = montantCible / somme;
+  const ajuste = {};
+  let cumule = 0;
+  let dernierIndex = -1;
+  POSTES_FRAIS.forEach((poste, i) => {
+    if (base[poste] > 0) dernierIndex = i;
+  });
+  POSTES_FRAIS.forEach((poste, i) => {
+    if (i === dernierIndex) return; // filled below
+    ajuste[poste] = Math.round(base[poste] * echelle);
+    cumule += ajuste[poste];
+  });
+  // La dernière ligne non nulle encaisse tout l'arrondi restant, et son propre
+  // montant ; elle reste donc positive.
+  ajuste[POSTES_FRAIS[dernierIndex]] = montantCible - cumule;
+  return ajuste;
+}
+
 export function genererLoyersDepuis(bailId, periodeDebut, periodeFin = periodeCourante()) {
   const bail = db.baux.find((b) => b.id === bailId);
   if (!bail) return 0;
@@ -434,9 +568,6 @@ export function enregistrerPaiement(data) {
   const bail = db.baux.find((b) => b.id === data.bailId);
   if (!bail) throw new Error("Bail introuvable");
 
-  const montant = Math.round(Number(data.montant) || 0);
-  if (!Number.isSafeInteger(montant) || montant <= 0) throw new Error("Le montant doit être un entier supérieur à zéro");
-
   const allocations = (data.allocations || []).filter((allocation) => allocation.montant > 0);
   if (allocations.length === 0) throw new Error("Sélectionnez au moins un mois à régler");
   if (allocations.some((allocation) => !Number.isSafeInteger(allocation.montant))) {
@@ -445,6 +576,39 @@ export function enregistrerPaiement(data) {
   if (new Set(allocations.map((allocation) => allocation.loyerId)).size !== allocations.length) {
     throw new Error("Un mois ne peut être sélectionné qu'une seule fois");
   }
+
+  // Détail des frais saisi à l'encaissement : il décrit ce que ce versement
+  // règle réellement. Appliqué au loyer de chaque mois couvert, il remplace
+  // les frais par défaut du bail — le relevé affichera donc les montants
+  // réellement encaissés, et non une moyenne théorique.
+  const detail = data.detail
+    ? Object.fromEntries(
+        POSTES_FRAIS.map((poste) => [
+          poste,
+          Math.max(0, Math.round(Number(data.detail[poste]) || 0)),
+        ])
+      )
+    : null;
+  if (detail && detail.loyer <= 0) {
+    throw new Error("Le loyer doit être supérieur à zéro");
+  }
+
+  // Le détail saisit remplace les frais par défaut sur chaque mois couvert :
+  // c'est ce qui a été réellement facturé, pas une moyenne. Le total du mois
+  // devient la somme des postes saisis.
+  let montant = Math.round(Number(data.montant) || 0);
+  if (detail) {
+    for (const alloc of allocations) {
+      const loyer = db.loyers.find((l) => l.id === alloc.loyerId);
+      if (loyer) appliquerDetailLoyer(loyer, detail);
+    }
+    montant = allocations.reduce((s, alloc) => s + alloc.montant, 0);
+  }
+
+  if (!Number.isSafeInteger(montant) || montant <= 0) {
+    throw new Error("Le montant doit être un entier supérieur à zéro");
+  }
+
   const totalAlloue = allocations.reduce((s, allocation) => s + allocation.montant, 0);
   if (totalAlloue > montant) throw new Error("Les mois sélectionnés dépassent le montant reçu");
 
@@ -510,7 +674,19 @@ export function enregistrerPaiement(data) {
     mode: data.mode || "especes",
     reference: data.reference || "",
     note: data.note || "",
-    allocations: allocations.map((a) => ({ loyerId: a.loyerId, montant: Math.round(a.montant) })),
+    // Le détail des sept lignes est celui de l'encaissement. Il est figé ici
+    // parce que la quittance doit rester identique même si les frais par
+    // défaut du bail changent plus tard.
+    detail: data.detail ? dupliquer(data.detail) : null,
+    libelles: data.libelles ? dupliquer(data.libelles) : null,
+    allocations: allocations.map((a, i) => ({
+      loyerId: a.loyerId,
+      montant: Math.round(a.montant),
+      // Pour un paiement couvrant plusieurs mois, le détail saisi est imputé
+      // au premier mois et les suivants n'en portent pas : les charges ont été
+      // relevées une fois, pas réécrites mois par mois.
+      detail: i === 0 && data.detail ? dupliquer(data.detail) : null,
+    })),
   };
   db.paiements.push(paiement);
   recomputeStatutLoyers(allocations.map((a) => a.loyerId));
@@ -621,16 +797,45 @@ export function genererQuittance(paiementId) {
     telephoneProprietaire: db.proprietaire.telephone,
     ifuProprietaire: db.proprietaire.ifu,
     nomLocataire: locataire ? `${locataire.nom} ${locataire.prenoms}` : "",
+    prenomsLocataire: locataire ? locataire.prenoms : "",
+    ifuLocataire: locataire ? locataire.ifu : "",
+    telephoneLocataire: locataire ? locataire.telephone : "",
+    numeroPieceLocataire: locataire ? `${locataire.pieceNature || ""} ${locataire.pieceNumero || ""}`.trim() : "",
     adresseImmeuble: immeuble ? `${immeuble.adresse}, ${immeuble.ville}` : "",
     designationLot: lot ? lot.designation : "",
+    // Numéros de réception : rappelés au locataire sur sa quittance.
+    reception: Array.isArray(db.proprietaire.reception)
+      ? dupliquer(db.proprietaire.reception.filter((r) => r && r.numero))
+      : [],
+    // La caution et ce qu'elle couvre, pour la ligne « CAUTION SUR : ».
+    cautionVersee: bail ? Number(bail.cautionVersee) || 0 : 0,
+    cautionSur: bail ? bail.cautionSur || "" : "",
+    // La période facturée, pour la ligne « MOIS DE : ».
+    periode: periodeDuPaiement(paiement),
     montant: paiement.montant,
     datePaiement: paiement.date,
     mode: paiement.mode,
     reference: paiement.reference,
+    // Détail des sept lignes, figé comme le reste : la quittance doit
+    // correspondre à ce qui a été réellement encaissé ce jour-là.
+    detail: paiement.detail ? dupliquer(paiement.detail) : null,
+    libelles: paiement.libelles ? dupliquer(paiement.libelles) : null,
     allocations: dupliquer(paiement.allocations),
   };
   db.quittances.push(quittance);
   return dupliquer(quittance);
+}
+
+/** La ou les périodes qu'un paiement couvre, en clair (« septembre 2026 »). */
+function periodeDuPaiement(paiement) {
+  const periods = (paiement.allocations || [])
+    .map((a) => db.loyers.find((l) => l.id === a.loyerId))
+    .filter(Boolean)
+    .map((l) => l.periode)
+    .sort();
+  if (periods.length === 0) return "";
+  if (periods.length === 1) return periodeToLabel(periods[0]);
+  return `${periodeToLabel(periods[0])} au ${periodeToLabel(periods[periods.length - 1])}`;
 }
 
 function nombreLoyersAnnee(bailId, annee) {
@@ -649,6 +854,7 @@ export function genererQuittancesManquantes() {
 }
 
 // --- Génération de la base de démonstration ---
+
 
 /**
  * Remplit la base de démonstration : loyers depuis le début des baux, paiements
@@ -699,6 +905,9 @@ export function initialiserDemo() {
       const loyer = loyers[i];
       const jour = 3 + ((i * 7) % 20);
       const date = `${loyer.periode}-${String(jour).padStart(2, "0")}`;
+      // Le locataire règle le mois en entier, loyer et charges comprises :
+      // le montant versé est donc exactement le montant dû. Le détail des
+      // sept lignes est transmis, c'est lui qui figurera sur la quittance.
       enregistrerPaiement({
         bailId: bail.id,
         date,
@@ -706,11 +915,15 @@ export function initialiserDemo() {
         mode: bail.id === "bail_2" ? "virement" : "especes",
         reference: bail.id === "bail_2" ? `VIR-${2026000 + i}` : "",
         note: "",
+        detail: detailDuLoyer(bail, loyer),
+        libelles: { autre1: bail.fraisDefaut?.libelle1 || "Autre 1", autre2: bail.fraisDefaut?.libelle2 || "Autre 2" },
         allocations: [{ loyerId: loyer.id, montant: loyer.montantDu }],
       });
     }
 
-    // Paiement partiel sur un loyer plus récent.
+    // Paiement partiel sur un loyer plus récent : le locataire ne verse qu'une
+    // partie du mois, frais compris. Le détail est mis à l'échelle pour que la
+    // somme des lignes corresponde au montant réellement versé.
     if (scenario.partiel) {
       const cible = loyers[loyers.length - 1];
       if (cible) {
@@ -721,6 +934,8 @@ export function initialiserDemo() {
           mode: "especes",
           reference: "",
           note: "Versement partiel.",
+          detail: detailDuLoyer(bail, cible, scenario.partiel.montant),
+          libelles: { autre1: bail.fraisDefaut?.libelle1 || "Autre 1", autre2: bail.fraisDefaut?.libelle2 || "Autre 2" },
           allocations: [{ loyerId: cible.id, montant: scenario.partiel.montant }],
         });
       }
@@ -742,6 +957,8 @@ export function initialiserDemo() {
         mode: "mobile",
         reference: "MOOV-8821",
         note: "Avance sur le mois suivant.",
+        detail: detailDuLoyer(bail4, suivant),
+        libelles: { autre1: bail4.fraisDefaut?.libelle1 || "Autre 1", autre2: bail4.fraisDefaut?.libelle2 || "Autre 2" },
         allocations: [{ loyerId: suivant.id, montant: suivant.montantDu }],
       });
     }

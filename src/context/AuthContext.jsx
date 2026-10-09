@@ -3,6 +3,7 @@ import { createContext, useContext, useState, useCallback } from "react";
 const AuthContext = createContext(null);
 
 const STORAGE_KEY = "cag_auth_session";
+const PASSWORD_KEY = "cag_admin_password";
 
 // Compte gestionnaire par défaut
 const DEFAULT_CREDENTIALS = {
@@ -11,8 +12,21 @@ const DEFAULT_CREDENTIALS = {
   nom: "KOUASSI",
   prenoms: "Jean-Marc",
   role: "Bailleur gestionnaire",
-  cabinet: "Cabinet Albert & Gilles",
+  cabinet: "Chabi Arnaud GOUNOU",
 };
+
+/**
+ * Mot de passe applicable au compte gestionnaire.
+ * Celui de la page Paramètres prime : dès qu'il est modifié, il remplace
+ * celui du jeu de démonstration, et ce pour tous les navigateurs de l'appareil.
+ */
+function motDePasseEnCours() {
+  try {
+    return localStorage.getItem(PASSWORD_KEY) || DEFAULT_CREDENTIALS.password;
+  } catch {
+    return DEFAULT_CREDENTIALS.password;
+  }
+}
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
@@ -35,11 +49,12 @@ export function AuthProvider({ children }) {
     const cleanPass = (password || "").trim();
 
     // Authentification : accepte les identifiants officiels ou le compte démo
-    const isAccepted =
-      (cleanEmail === "admin@cag-immobilier.bj" && cleanPass === "admin") ||
-      (cleanEmail === "admin" && cleanPass === "admin") ||
-      (cleanEmail === "jean-marc.kouassi@cag.bj" && cleanPass === "admin123") ||
-      (cleanEmail.includes("@") && cleanPass.length >= 4);
+    const attendu = motDePasseEnCours();
+    const estCompteOfficiel =
+      cleanEmail === "admin@cag-immobilier.bj" || cleanEmail === "admin";
+    const isAccepted = estCompteOfficiel
+      ? cleanPass === attendu
+      : cleanEmail.includes("@") && cleanPass.length >= 4;
 
     if (isAccepted) {
       const userData = {
@@ -86,6 +101,27 @@ export function AuthProvider({ children }) {
     setUser(null);
   }, []);
 
+  /**
+   * Modification du mot de passe du compte gestionnaire.
+   * Renvoie { ok } ou { ok: false, error }.
+   */
+  const changePassword = useCallback(async (actuel, nouveau) => {
+    await new Promise((r) => setTimeout(r, 400));
+    if (!actuel || String(actuel) !== motDePasseEnCours()) {
+      return { ok: false, error: "Mot de passe actuel incorrect" };
+    }
+    if (!nouveau || String(nouveau).length < 4) {
+      return { ok: false, error: "Le mot de passe doit contenir au moins 4 caractères" };
+    }
+    try {
+      localStorage.setItem(PASSWORD_KEY, String(nouveau));
+    } catch (err) {
+      console.warn("Mot de passe non enregistré:", err);
+      return { ok: false, error: "Impossible d'enregistrer le mot de passe sur cet appareil" };
+    }
+    return { ok: true };
+  }, []);
+
   return (
     <AuthContext.Provider
       value={{
@@ -94,6 +130,7 @@ export function AuthProvider({ children }) {
         loading,
         login,
         logout,
+        changePassword,
         defaultCredentials: DEFAULT_CREDENTIALS,
       }}
     >

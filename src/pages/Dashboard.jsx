@@ -24,7 +24,8 @@ import {
   RotateCw,
 } from "lucide-react";
 import { useApp } from "../context/AppContext";
-import { Card, EmptyState, Avatar, LocataireLink } from "../components/ui";
+import { Card, EmptyState, LocataireLink } from "../components/ui";
+import BoutonInstaller from "../components/BoutonInstaller";
 import {
   formatMoney,
   formatDate,
@@ -33,6 +34,7 @@ import {
   MOIS_COURTS,
   pluriel,
 } from "../utils/format";
+import { PERIODES_GRAPHIQUE } from "../config/horizons";
 
 // Tooltip sur-mesure pour la courbe financière
 function CustomChartTooltip({ active, payload }) {
@@ -88,10 +90,11 @@ export default function Dashboard() {
 
   const [onglet, setOnglet] = useState("vue");
   const [vueCourbe, setVueCourbe] = useState("recettes"); // "recettes" | "flux" | "solde"
+  const [etalement, setEtalement] = useState(12); // mois couverts par la courbe
   const [chartKey, setChartKey] = useState(0);
 
-  const serie12 = serieMensuelle(12);
-  const serie = serie12.map((s) => {
+  const serieN = serieMensuelle(etalement);
+  const serie = serieN.map((s) => {
     const m = String(s.periode).match(/^(\d{4})-(\d{2})$/);
     const monthIdx = m ? Number(m[2]) - 1 : 0;
     const yearShort = m ? m[1].slice(2) : "";
@@ -103,8 +106,8 @@ export default function Dashboard() {
     };
   });
 
-  const totalRecettes12 = serie.reduce((sum, s) => sum + s.recettes, 0);
-  const moyenneMensuelle = Math.round(totalRecettes12 / (serie.length || 1));
+  const totalSurEtendue = serie.reduce((sum, s) => sum + s.recettes, 0);
+  const moyenneMensuelle = Math.round(totalSurEtendue / (serie.length || 1));
 
   const moisRecord = [...serie].sort((a, b) => b.recettes - a.recettes)[0];
   const moisActifs = serie.filter((s) => s.recettes > 0).length;
@@ -165,9 +168,12 @@ export default function Dashboard() {
             Synthèse de votre gestion locative · {periodeToLabel(moisCourant)}
           </p>
         </div>
-        <Link to="/paiements/nouveau" className="btn btn-primary">
-          <Plus size={16} /> Encaisser un versement
-        </Link>
+        <div className="btn-group">
+          <BoutonInstaller variante="bouton" />
+          <Link to="/paiements" className="btn btn-primary">
+            <Plus size={16} /> Encaisser un versement
+          </Link>
+        </div>
       </div>
 
       <div className="grid grid-4" style={{ marginBottom: "1.5rem" }}>
@@ -212,13 +218,13 @@ export default function Dashboard() {
 
       {onglet === "vue" && (
         <div key="vue" className="tab-pane-transition">
-          {/* Courbe financière experte sur 12 mois */}
+          {/* Courbe financière experte, étendue paramétrable */}
           <Card className="chart-card" style={{ marginBottom: "1.5rem" }}>
             <div className="chart-header-container">
               <div>
                 <h2 className="card-title" style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
                   <TrendingUp size={18} color="var(--primary)" />
-                  Évolution des flux de trésorerie sur 12 mois
+                  Évolution des flux de trésorerie sur {etalement} mois
                 </h2>
                 <p className="text-muted" style={{ fontSize: "0.8rem", margin: "0.15rem 0 0" }}>
                   Suivi mensuel des encaissements et rentabilité locative
@@ -258,6 +264,19 @@ export default function Dashboard() {
                 >
                   <RotateCw size={14} />
                 </button>
+                <select
+                  className="select chart-etalement"
+                  value={etalement}
+                  onChange={(e) => setEtalement(Number(e.target.value))}
+                  aria-label="Étendue du graphique"
+                  title="Étendue du graphique"
+                >
+                  {PERIODES_GRAPHIQUE.map((p) => (
+                    <option key={p.valeur} value={p.valeur}>
+                      {p.label}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
 
@@ -267,9 +286,9 @@ export default function Dashboard() {
               <>
                 <div className="chart-kpi-strip">
                   <div className="chart-kpi-item">
-                    <span className="chart-kpi-label">Total 12 mois</span>
-                    <span className="chart-kpi-value">{formatMoney(totalRecettes12)}</span>
-                    <span className="chart-kpi-hint">sur 12 périodes</span>
+                    <span className="chart-kpi-label">Total {etalement} mois</span>
+                    <span className="chart-kpi-value">{formatMoney(totalSurEtendue)}</span>
+                    <span className="chart-kpi-hint">sur {serie.length} périodes</span>
                   </div>
                   <div className="chart-kpi-item">
                     <span className="chart-kpi-label">Moyenne</span>

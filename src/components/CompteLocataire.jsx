@@ -1,9 +1,13 @@
 // Compte du locataire : le relevé ligne à ligne des loyers et des règlements.
 // C'est l'écran que le propriétaire consulte à la place de son cahier.
+//
+// Le relevé est en lecture seule. Les frais de chaque mois sont saisis au
+// moment de l'encaissement, et le loyer de l'échéance porte alors la facture
+// réellement appliquée. Ici on ne fait que montrer ce qui a été facturé.
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Link } from "react-router-dom";
-import { Pencil, Receipt, ArrowRight } from "lucide-react";
+import { Receipt, ArrowRight } from "lucide-react";
 import {
   formatMoney,
   formatDate,
@@ -12,46 +16,34 @@ import {
   pluriel,
   accorde,
 } from "../utils/format";
-import { Card, EmptyState, Modal, TextInput } from "./ui";
-import { useToast } from "../context/ToastContext";
-
-const POSTES = [
-  { id: "loyer", label: "Loyer" },
-  { id: "eau", label: "Eau" },
-  { id: "electricite", label: "Électricité" },
-  { id: "orduresMenageres", label: "Ordures ménagères" },
-  { id: "autre1", label: "Autre 1" },
-  { id: "autre2", label: "Autre 2" },
-];
+import { Card, EmptyState } from "./ui";
+import { lignesPostesPour } from "../data/db";
 
 function montantPoste(loyer, poste) {
   if (loyer[poste] !== undefined) return Number(loyer[poste]) || 0;
   return poste === "loyer" ? Number(loyer.montantDu) || 0 : 0;
 }
 
-/**
- * @param {object} props
- * @param {string} props.bailId
- * @param {boolean} props.compact  limite le nombre de lignes affichées
- */
 export default function CompteLocataire({
   bailId,
+  bail,
   loyersDe,
   paiementsDe,
   quittancesParPaiement,
-  saveLoyer,
   compact = false,
 }) {
+  // Les postes viennent du bail : les libellés renommables (« Frais de
+  // porte ») sont ainsi appliqués au tableau comme à la saisie.
+  const postes = useMemo(
+    () => lignesPostesPour(bail).map(({ key, label }) => ({ id: key, label })),
+    [bail]
+  );
   const loyers = useMemo(() => loyersDe(bailId), [loyersDe, bailId]);
   const paiements = useMemo(() => paiementsDe(bailId), [paiementsDe, bailId]);
-  const { addToast } = useToast();
-  const [loyerEnEdition, setLoyerEnEdition] = useState(null);
-  const [montants, setMontants] = useState(null);
-  const [chargesActives, setChargesActives] = useState(null);
-  const [erreurEdition, setErreurEdition] = useState("");
 
   // Solde cumulé, mois après mois : c'est la colonne qui sert à retrouver
-  // « depuis quand il me doit de l'argent ». On repart des allocations réelles.
+  // « depuis quand il me doit de l'argent ». On le porte dans chaque ligne via
+  // reduce, sans variable partagée entre deux rendus.
   const lignes = useMemo(() => {
     const payeParLoyer = new Map();
     for (const p of paiements) {
@@ -59,14 +51,11 @@ export default function CompteLocataire({
         payeParLoyer.set(a.loyerId, (payeParLoyer.get(a.loyerId) || 0) + a.montant);
       }
     }
-    // Solde cumulé : on le porte dans chaque ligne via reduce, sans variable
-    // partagée entre deux rendus.
     return loyers.reduce(
       (acc, l) => {
         const paye = payeParLoyer.get(l.id) || 0;
         const precedent = acc.length ? acc[acc.length - 1].solde : 0;
-        const solde = precedent + l.montantDu - paye;
-        acc.push({ loyer: l, paye, solde });
+        acc.push({ loyer: l, paye, solde: precedent + l.montantDu - paye });
         return acc;
       },
       []
@@ -77,7 +66,7 @@ export default function CompteLocataire({
   const masquees = lignes.length - affichees.length;
 
   const totauxPostes = Object.fromEntries(
-    POSTES.map(({ id }) => [
+    postes.map(({ id }) => [
       id,
       loyers.reduce((total, l) => total + montantPoste(l, id), 0),
     ])
@@ -85,64 +74,9 @@ export default function CompteLocataire({
   const totalDu = loyers.reduce((s, l) => s + l.montantDu, 0);
   const totalPaye = paiements.reduce((s, p) => s + p.montant, 0);
   const soldeFinal = totalDu - totalPaye;
-  const payePourLoyerEnEdition = loyerEnEdition
-    ? paiements.reduce(
-        (total, paiement) =>
-          total + (paiement.allocations || [])
-            .filter((allocation) => allocation.loyerId === loyerEnEdition.id)
-            .reduce((sousTotal, allocation) => sousTotal + allocation.montant, 0),
-        0
-      )
-    : 0;
-  const totalEnEdition = montants
-    ? POSTES.reduce((total, { id }) => {
-        if (id !== "loyer" && !chargesActives?.[id]) return total;
-        return total + (Number(montants[id]) || 0);
-      }, 0)
-    : 0;
 
   // Les derniers versements, pour la colonne de droite du détail locataire.
   const derniersPaiements = paiements.slice(0, 4);
-
-  const ouvrirEdition = (loyer) => {
-    setLoyerEnEdition(loyer);
-    setMontants(Object.fromEntries(POSTES.map(({ id }) => [id, String(montantPoste(loyer, id))])));
-    setChargesActives(
-      Object.fromEntries(
-        POSTES.filter(({ id }) => id !== "loyer")
-          .map(({ id }) => [id, montantPoste(loyer, id) > 0])
-      )
-    );
-    setErreurEdition("");
-  };
-
-  const enregistrerPostes = () => {
-    const saisieInvalide = POSTES.some(({ id }) => {
-      if (id !== "loyer" && !chargesActives[id]) return false;
-      return montants[id] === "" || !/^\d+$/.test(montants[id]);
-    });
-    const data = Object.fromEntries(
-      POSTES.map(({ id }) => [
-        id,
-        id !== "loyer" && !chargesActives[id] ? 0 : Number(montants[id]) || 0,
-      ])
-    );
-    if (saisieInvalide || Object.values(data).some((montant) => !Number.isSafeInteger(montant))) {
-      setErreurEdition("Saisissez un montant entier pour le loyer et chaque charge sélectionnée.");
-      return;
-    }
-    if (Object.entries(chargesActives).some(([id, active]) => active && data[id] <= 0)) {
-      setErreurEdition("Une charge sélectionnée doit avoir un montant supérieur à zéro.");
-      return;
-    }
-    const resultat = saveLoyer(loyerEnEdition.id, data);
-    if (!resultat.ok) {
-      setErreurEdition(resultat.erreur);
-      return;
-    }
-    addToast(`Frais de ${periodeToLabel(loyerEnEdition.periode)} enregistrés`);
-    setLoyerEnEdition(null);
-  };
 
   return (
     <div className="stack">
@@ -158,10 +92,12 @@ export default function CompteLocataire({
         }
       >
         <p className="text-muted" style={{ margin: "0 0 0.85rem", fontSize: "0.84rem" }}>
-          Les frais de chaque mois sont additionnés dans « Total dû ». « Payé » indique ce qui a été versé pour le mois ;
-          le « Solde cumulé » montre ce qu’il reste à payer depuis le début du bail. Tous les montants sont en FCFA.
-          {!compact && saveLoyer && " Cliquez sur le crayon d’un mois pour préparer sa facture et choisir les charges à inclure."}
+          « Total dû » additionne le loyer et les charges du mois, tels qu’ils ont été
+          saisis lors de l’encaissement. « Payé » indique ce qui a été versé pour le mois ;
+          le « Solde cumulé » montre ce qu’il reste à payer depuis le début du bail.
+          Tous les montants sont en FCFA.
         </p>
+
         {loyers.length === 0 ? (
           <EmptyState
             message="Aucun loyer généré pour ce bail. Utilisez « Générer les loyers » pour reconstituer l'historique."
@@ -172,58 +108,66 @@ export default function CompteLocataire({
               <thead>
                 <tr>
                   <th>Mois</th>
-                  {POSTES.map(({ id, label }) => <th key={id} className="num">{label}</th>)}
-                  <th className="num" title="Somme des frais du mois">Total dû</th>
-                  <th className="num" title="Paiements imputés à ce mois">Payé</th>
-                  <th className="num" title="Montant restant dû depuis le début du bail">Solde cumulé</th>
+                  {postes.map(({ id, label }) => (
+                    <th key={id} className="num">
+                      {label}
+                    </th>
+                  ))}
+                  <th className="num" title="Somme des frais du mois">
+                    Total dû
+                  </th>
+                  <th className="num" title="Paiements imputés à ce mois">
+                    Payé
+                  </th>
+                  <th className="num" title="Montant restant dû depuis le début du bail">
+                    Solde cumulé
+                  </th>
                 </tr>
               </thead>
               <tbody>
-                {affichees.map(({ loyer, paye, solde }) => {
-                  return (
-                    <tr key={loyer.id}>
-                      <td title={periodeToLabel(loyer.periode)}>
-                        <span>{periodeToCourt(loyer.periode)}</span>
-                        {!compact && saveLoyer && (
-                          <button
-                            type="button"
-                            className="btn btn-small btn-ghost"
-                            style={{ marginLeft: "0.25rem" }}
-                            onClick={() => ouvrirEdition(loyer)}
-                            aria-label={`Modifier les frais de ${periodeToLabel(loyer.periode)}`}
-                            title="Modifier les frais"
-                          >
-                            <Pencil size={13} />
-                          </button>
-                        )}
+                {affichees.map(({ loyer, paye, solde }) => (
+                  <tr key={loyer.id}>
+                    <td title={periodeToLabel(loyer.periode)}>
+                      <span>{periodeToCourt(loyer.periode)}</span>
+                    </td>
+                    {postes.map(({ id }) => (
+                      <td key={id} className="num">
+                        {montantPoste(loyer, id) > 0 ? formatMoney(montantPoste(loyer, id)) : "—"}
                       </td>
-                      {POSTES.map(({ id }) => (
-                        <td key={id} className="num">
-                          {formatMoney(montantPoste(loyer, id))}
-                        </td>
-                      ))}
-                      <td className="num">{formatMoney(loyer.montantDu)}</td>
-                      <td className="num">{paye > 0 ? formatMoney(paye) : "—"}</td>
-                      <td className="num">
-                        <span style={{ color: solde > 0 ? "var(--danger)" : "var(--success)", fontWeight: 600 }}>
-                          {solde === 0 ? "À jour" : `${formatMoney(Math.abs(solde))} ${solde > 0 ? "à payer" : "de crédit"}`}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
+                    ))}
+                    <td className="num" style={{ fontWeight: 600 }}>
+                      {formatMoney(loyer.montantDu)}
+                    </td>
+                    <td className="num">{paye > 0 ? formatMoney(paye) : "—"}</td>
+                    <td className="num">
+                      <span
+                        style={{ color: solde > 0 ? "var(--danger)" : "var(--success)", fontWeight: 600 }}
+                      >
+                        {solde === 0
+                          ? "À jour"
+                          : `${formatMoney(Math.abs(solde))} ${solde > 0 ? "à payer" : "de crédit"}`}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
               <tfoot>
                 <tr style={{ borderTop: "2px solid var(--border)" }}>
                   <th>Total</th>
-                  {POSTES.map(({ id }) => (
-                    <th key={id} className="num">{formatMoney(totauxPostes[id])}</th>
+                  {postes.map(({ id }) => (
+                    <th key={id} className="num">
+                      {totauxPostes[id] > 0 ? formatMoney(totauxPostes[id]) : "—"}
+                    </th>
                   ))}
                   <th className="num">{formatMoney(totalDu)}</th>
                   <th className="num">{formatMoney(totalPaye)}</th>
                   <th className="num">
-                    <span style={{ color: soldeFinal > 0 ? "var(--danger)" : "var(--success)", fontSize: "1rem" }}>
-                      {soldeFinal === 0 ? "À jour" : `${formatMoney(Math.abs(soldeFinal))} ${soldeFinal > 0 ? "à payer" : "de crédit"}`}
+                    <span
+                      style={{ color: soldeFinal > 0 ? "var(--danger)" : "var(--success)", fontSize: "1rem" }}
+                    >
+                      {soldeFinal === 0
+                        ? "À jour"
+                        : `${formatMoney(Math.abs(soldeFinal))} ${soldeFinal > 0 ? "à payer" : "de crédit"}`}
                     </span>
                   </th>
                 </tr>
@@ -232,81 +176,6 @@ export default function CompteLocataire({
           </div>
         )}
       </Card>
-
-      {loyerEnEdition && montants && (
-        <Modal
-          title={`Facture — ${periodeToLabel(loyerEnEdition.periode)}`}
-          onClose={() => setLoyerEnEdition(null)}
-          width="560px"
-          footer={
-            <>
-              <button type="button" className="btn btn-secondary" onClick={() => setLoyerEnEdition(null)}>
-                Annuler
-              </button>
-              <button type="button" className="btn btn-primary" onClick={enregistrerPostes}>
-                Enregistrer
-              </button>
-            </>
-          }
-        >
-          <p className="text-muted" style={{ marginTop: 0 }}>
-            Le loyer est toujours inclus. Cochez uniquement les charges applicables à cette facture,
-            puis saisissez leur montant. Le total dû est calculé automatiquement.
-          </p>
-          <div className="form-grid">
-            {POSTES.map(({ id, label }) => {
-              const estLoyer = id === "loyer";
-              const actif = estLoyer || chargesActives[id];
-              return (
-                <div key={id} className="form-group">
-                  {!estLoyer && (
-                    <label style={{ display: "flex", alignItems: "center", gap: "0.45rem", marginBottom: "0.45rem" }}>
-                      <input
-                        type="checkbox"
-                        checked={chargesActives[id]}
-                        onChange={(event) => {
-                          const active = event.target.checked;
-                          setChargesActives((actuelles) => ({ ...actuelles, [id]: active }));
-                          if (active && !montants[id]) {
-                            setMontants((actuels) => ({ ...actuels, [id]: "0" }));
-                          }
-                        }}
-                      />
-                      Inclure {label.toLowerCase()}
-                    </label>
-                  )}
-                  {actif && (
-                    <>
-                      <label htmlFor={`frais-${id}`}>{label} (FCFA){estLoyer && " *"}</label>
-                      <TextInput
-                        id={`frais-${id}`}
-                        type="text"
-                        inputMode="numeric"
-                        pattern="[0-9]*"
-                        value={montants[id]}
-                        onFocus={(e) => e.target.select()}
-                        onChange={(e) => setMontants((actuels) => ({ ...actuels, [id]: e.target.value }))}
-                      />
-                    </>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-          <p style={{ margin: "0.75rem 0 0", fontWeight: 600 }}>
-            Total : {formatMoney(totalEnEdition)}
-          </p>
-          {totalEnEdition < payePourLoyerEnEdition && (
-            <p className="text-muted" style={{ margin: "0.5rem 0 0", fontSize: "0.84rem" }}>
-              Ce total est inférieur au paiement déjà reçu ({formatMoney(payePourLoyerEnEdition)}).
-              La différence sera ajoutée au crédit du locataire.
-            </p>
-          )}
-          {erreurEdition && (
-            <p className="error-text" role="alert" style={{ marginTop: "0.5rem" }}>{erreurEdition}</p>
-          )}
-        </Modal>
-      )}
 
       <Card title="Derniers versements">
         {derniersPaiements.length === 0 ? (

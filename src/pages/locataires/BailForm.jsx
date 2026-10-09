@@ -19,12 +19,26 @@ import {
   periodesEntre,
   comparePeriode,
 } from "../../utils/format";
+import { LIGNES_FRAIS, postesALZero } from "../../data/db";
 
 const CAUTIONS = [
   { id: "non-versee", label: "Non versée" },
   { id: "deposee", label: "Déposée — conservée" },
   { id: "restituee", label: "Restituée" },
   { id: "retenue", label: "Retenue (damage, impayés)" },
+];
+
+// Ce que la caution couvre : repris tel quel sur la quittance officielle,
+// à la ligne « CAUTION SUR : ».
+const CAUTIONS_SUR = [
+  { id: "", label: "— non précisé —" },
+  { id: "Loyer", label: "Loyer" },
+  { id: "Eau", label: "Eau" },
+  { id: "Électricité", label: "Électricité" },
+  { id: "Loyer + eau", label: "Loyer et eau" },
+  { id: "Loyer + électricité", label: "Loyer et électricité" },
+  { id: "Loyer + eau + électricité", label: "Loyer, eau et électricité" },
+  { id: "Autre", label: "Autre" },
 ];
 
 // Date du jour, figée au chargement : évite de recalculer pendant le rendu.
@@ -53,9 +67,12 @@ export default function BailForm() {
     dateDebut: AUJOURDHUI,
     dateFin: "",
     loyerMensuel: "",
-    cautionVersee: 0,
-    cautionStatut: "non-versee",
+cautionVersee: 0,
+  cautionStatut: "non-versee",
+  cautionSur: "",
     notes: "",
+    // Frais habituels : ils pré-remplissent la facture de chaque encaissement.
+    fraisDefaut: postesALZero(),
   });
   const [erreurs, setErreurs] = useState({});
   const [erreurGlobale, setErreurGlobale] = useState(null);
@@ -146,9 +163,11 @@ export default function BailForm() {
         dateDebut: form.dateDebut,
         dateFin: form.dateFin || null,
         loyerMensuel: loyer,
-        cautionVersee: Number(form.cautionVersee) || 0,
-        cautionStatut: form.cautionStatut,
+cautionVersee: Number(form.cautionVersee) || 0,
+  cautionStatut: form.cautionStatut,
+  cautionSur: form.cautionSur || "",
         notes: form.notes,
+        fraisDefaut: form.fraisDefaut,
       },
       null
     );
@@ -259,9 +278,75 @@ export default function BailForm() {
                 />
               </Field>
 
+              {/* Repris tel quel sur la quittance officielle, ligne « CAUTION SUR : ». */}
+              <Field label="La caution couvre" hint="Imprimé sur la quittance">
+                <Select
+                  value={form.cautionSur || ""}
+                  onChange={set("cautionSur")}
+                  options={CAUTIONS_SUR}
+                />
+              </Field>
+
               <Field label="État de la caution" className="span-2">
                 <Select value={form.cautionStatut} onChange={set("cautionStatut")} options={CAUTIONS} />
               </Field>
+
+              <div className="span-2" style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "0.85rem 1rem" }}>
+                <div style={{ fontSize: "0.82rem", fontWeight: 600, marginBottom: "0.15rem" }}>
+                  Frais habituels
+                </div>
+                <p className="text-muted" style={{ fontSize: "0.8rem", margin: "0 0 0.75rem" }}>
+                  Ces montants pré-remplissent la facture de chaque encaissement. Le
+                  propriétaire les corrigera si la facture du mois change. Mettez 0 si la
+                  charge ne s’applique pas.
+                </p>
+                <div className="form-grid">
+                  {LIGNES_FRAIS.filter((p) => p.key !== "loyer").map((poste) => (
+                    <Field
+                      key={poste.key}
+                      label={
+                        poste.libre ? (
+                          <input
+                            type="text"
+                            className="input"
+                            style={{ fontSize: "0.85rem", padding: "0.3rem 0.5rem" }}
+                            value={form.fraisDefaut[`libelle${poste.libre}`] || poste.label}
+                            onChange={(e) =>
+                              setForm((f) => ({
+                                ...f,
+                                fraisDefaut: {
+                                  ...f.fraisDefaut,
+                                  [`libelle${poste.libre}`]: e.target.value,
+                                },
+                              }))
+                            }
+                            placeholder={poste.label}
+                            aria-label={`Nom de la charge ${poste.label}`}
+                          />
+                        ) : (
+                          poste.label
+                        )
+                      }
+                    >
+                      <TextInput
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={String(form.fraisDefaut[poste.key] || 0)}
+                        onChange={(e) =>
+                          setForm((f) => ({
+                            ...f,
+                            fraisDefaut: {
+                              ...f.fraisDefaut,
+                              [poste.key]: Math.max(0, Math.round(Number(e.target.value) || 0)),
+                            },
+                          }))
+                        }
+                      />
+                    </Field>
+                  ))}
+                </div>
+              </div>
 
               <Field label="Notes sur le bail" className="span-2">
                 <textarea

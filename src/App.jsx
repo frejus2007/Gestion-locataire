@@ -7,11 +7,12 @@ import { Suspense, lazy, useState, useEffect } from "react";
 import { BrowserRouter, Routes, Route, Link } from "react-router-dom";
 import { AppProvider } from "./context/AppContext";
 import { ToastProvider } from "./context/ToastContext";
-import { AuthProvider } from "./context/AuthContext";
+import { AuthProvider } from "./context/AuthContext.bridge";
 import Layout from "./components/Layout";
 import ProtectedRoute from "./components/ProtectedRoute";
 import SplashScreen from "./components/SplashScreen";
 import { EmptyState } from "./components/ui";
+import { preparerLogo, preparerSignature } from "./utils/quittancePdf";
 import { FileQuestion } from "lucide-react";
 
 const Login = lazy(() => import("./pages/Login"));
@@ -22,19 +23,14 @@ const ImmeubleList = lazy(() => import("./pages/immeubles/ImmeubleList"));
 const ImmeubleDetail = lazy(() => import("./pages/immeubles/ImmeubleDetail"));
 const ImmeubleForm = lazy(() => import("./pages/immeubles/ImmeubleForm"));
 
-// Locataires
-const LocataireList = lazy(() => import("./pages/locataires/LocataireList"));
-const LocataireDetail = lazy(() => import("./pages/locataires/LocataireDetail"));
-const LocataireForm = lazy(() => import("./pages/locataires/LocataireForm"));
-const BailForm = lazy(() => import("./pages/locataires/BailForm"));
-
 // Argent
-const PaiementList = lazy(() => import("./pages/paiements/PaiementList"));
-const PaiementForm = lazy(() => import("./pages/paiements/PaiementForm"));
-const QuittanceList = lazy(() => import("./pages/quittances/QuittanceList"));
-const QuittanceView = lazy(() => import("./pages/quittances/QuittanceView"));
-const DepenseList = lazy(() => import("./pages/depenses/DepenseList"));
-const Journal = lazy(() => import("./pages/Journal"));
+const PaiementsQuittances = lazy(() => import("./pages/PaiementsQuittances"));
+
+// Locataires
+const Locataires = lazy(() => import("./pages/locataires/Locataires"));
+const LocataireForm = lazy(() => import("./pages/locataires/LocataireForm"));
+const Compte = lazy(() => import("./pages/locataires/Compte"));
+const BailForm = lazy(() => import("./pages/locataires/BailForm"));
 
 const Parametres = lazy(() => import("./pages/Parametres"));
 
@@ -80,6 +76,13 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    // Logo et signature sont chargés une fois, en tâche de fond : les
+    // quittances produites ensuite les embarquent sans attente.
+    preparerLogo();
+    preparerSignature();
+  }, []);
+
   return (
     <AppProvider>
       <ToastProvider>
@@ -118,27 +121,16 @@ export default function App() {
                     <Route path=":id/modifier" element={<ImmeubleForm />} />
                   </Route>
 
-                  <Route path="locataires">
-                    <Route index element={<LocataireList />} />
+<Route path="locataires">
+                    <Route index element={<Locataires />} />
                     <Route path="nouveau" element={<LocataireForm />} />
-                    <Route path=":id" element={<LocataireDetail />} />
+                    <Route path=":id" element={<Compte />} />
                     <Route path=":id/modifier" element={<LocataireForm />} />
                     <Route path=":id/bail" element={<BailForm />} />
-                    <Route path=":id/paiement" element={<PaiementForm />} />
                   </Route>
 
-                  <Route path="paiements">
-                    <Route index element={<PaiementList />} />
-                    <Route path="nouveau" element={<PaiementForm />} />
-                  </Route>
+                  <Route path="paiements" element={<PaiementsQuittances />} />
 
-                  <Route path="quittances">
-                    <Route index element={<QuittanceList />} />
-                    <Route path=":id" element={<QuittanceView />} />
-                  </Route>
-
-                  <Route path="depenses" element={<DepenseList />} />
-                  <Route path="journal" element={<Journal />} />
                   <Route path="parametres" element={<Parametres />} />
 
                   <Route path="*" element={<Introuvable />} />

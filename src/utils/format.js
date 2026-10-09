@@ -198,9 +198,54 @@ export function numberToWords(n) {
   return mots.join(" ");
 }
 
-export function amountToWords(amount) {
-  const n = Math.round(Number(amount) || 0);
-  return `${numberToWords(n)} francs CFA`;
+/**
+ * Montant en toutes lettres, avec la devise et la partie décimale.
+ * 250000   → « Deux cent cinquante mille francs CFA »
+ * 2500.25  → « Deux mille cinq cents francs CFA et vingt-cinq centimes »
+ * La devise est reprise en paramètre : rien n'est figé au franc CFA.
+ */
+export function amountToWords(amount, devise = "francs CFA") {
+  const n = Number(amount);
+  if (!Number.isFinite(n)) return "";
+
+  const absolu = Math.abs(n);
+  const entiers = Math.trunc(absolu);
+  const centimes = Math.round((absolu - entiers) * 100);
+
+  // La devise s'accorde avec la partie entière : « un franc CFA », mais
+  // « un franc CFA et un centime » — 1,01 CFA se dit bien « un franc ».
+  // 0 et 1 prennent le singulier : « zéro franc », « un franc CFA ».
+  const libelleDevise = entiers <= 1 ? devise.replace(/s(\s|$)/, "$1") : devise;
+
+  let phrase = centimes > 0
+    ? `${numberToWords(entiers)} ${libelleDevise} et ${numberToWords(centimes)} ${
+        centimes > 1 ? "centimes" : "centime"
+      }`
+    : `${numberToWords(entiers)} ${libelleDevise}`;
+
+  // Un montant purement décimal s'écrit « cinquante centimes », sans « zéro et ».
+  if (entiers === 0 && centimes > 0) {
+    phrase = `${numberToWords(centimes)} ${centimes > 1 ? "centimes" : "centime"}`;
+  }
+
+  const miseEnForme = phrase.charAt(0).toUpperCase() + phrase.slice(1);
+  // « moins » se met en minuscules, mais « CFA » garde sa casse.
+  if (n < 0) {
+    const deviseMinuscule = devise.toLowerCase();
+    return `Moins ${phrase.toLowerCase().replace(deviseMinuscule, devise)}`;
+  }
+  return miseEnForme;
+}
+
+/**
+ * Montant formaté avec des espaces ordinaires.
+ * `Intl` insère des espaces insécables (U+00A0, U+202F) qui s'affichent mal
+ * à l'impression et se copient mal. On les remplace ici une fois pour toutes.
+ */
+export function formatMoneyPlain(amount) {
+  return new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 0 })
+    .format(Number(amount) || 0)
+    .replace(/[\u00a0\u202f\u2009]/g, " ");
 }
 
 // --- Numérotation des quittances ---

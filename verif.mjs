@@ -1,6 +1,25 @@
 // Verification fonctionnelle : rend chaque page et extrait le texte visible.
 // Detecte les pluriels casses, les valeurs undefined et les etats vides.
 import { createServer } from 'vite';
+
+// Le rendu SSR n'a pas de window. Certains composants (install PWA, thème)
+// l'utilisent au montage : on fournit un minimum pour ne pas confondre un
+// vrai défaut de rendu avec une limite du test.
+globalThis.window = globalThis.window || {
+  matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
+  addEventListener() {},
+  removeEventListener() {},
+  localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+  navigator: { userAgent: 'node', standalone: false },
+  // jsPDF cherche atob/btoa sur son global de rendu, qui est notre faux window
+  // sous SSR : sans eux, le module jette une TypeError au chargement.
+  atob: (s) => Buffer.from(s, 'base64').toString('binary'),
+  btoa: (s) => Buffer.from(s, 'binary').toString('base64'),
+};
+// La generation de quittance PDF (jsPDF) s'appuie sur atob/btoa, absents en
+// Node : on les fournit pour que le module se charge et que la page se rende.
+globalThis.atob = globalThis.atob || ((s) => Buffer.from(s, 'base64').toString('binary'));
+globalThis.btoa = globalThis.btoa || ((s) => Buffer.from(s, 'binary').toString('base64'));
 import React from 'react';
 import { renderToString } from 'react-dom/server';
 import { StaticRouter, Routes, Route } from 'react-router';
@@ -8,6 +27,7 @@ import { StaticRouter, Routes, Route } from 'react-router';
 const server = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'error' });
 const { AppProvider } = await server.ssrLoadModule('/src/context/AppContext.jsx');
 const { ToastProvider } = await server.ssrLoadModule('/src/context/ToastContext.jsx');
+const { AuthProvider } = await server.ssrLoadModule('/src/context/AuthContext.jsx');
 const db = await server.ssrLoadModule('/src/data/db.js');
 
 const cibles = [
@@ -15,16 +35,14 @@ const cibles = [
   ['/immeubles', 'pages/immeubles/ImmeubleList.jsx'],
   ['/immeubles/nouveau', 'pages/immeubles/ImmeubleForm.jsx'],
   ['/immeubles/imm_1', 'pages/immeubles/ImmeubleDetail.jsx'],
-  ['/locataires', 'pages/locataires/LocataireList.jsx'],
+  ['/locataires', 'pages/locataires/Locataires.jsx'],
   ['/locataires/nouveau', 'pages/locataires/LocataireForm.jsx'],
-  ['/locataires/loc_1', 'pages/locataires/LocataireDetail.jsx'],
+  // Compte est adossé au bail, BailForm et LocataireForm au locataire : d'où
+  // deux identifiants de test différents pour la même section.
+  ['/locataires/bail_1', 'pages/locataires/Compte.jsx'],
   ['/locataires/loc_1/bail', 'pages/locataires/BailForm.jsx'],
-  ['/paiements', 'pages/paiements/PaiementList.jsx'],
-  ['/paiements/nouveau', 'pages/paiements/PaiementForm.jsx'],
-  ['/quittances', 'pages/quittances/QuittanceList.jsx'],
-  ['/quittances/' + db.listQuittances()[0].id, 'pages/quittances/QuittanceView.jsx'],
-  ['/depenses', 'pages/depenses/DepenseList.jsx'],
-  ['/journal', 'pages/Journal.jsx'],
+  ['/paiements', 'pages/PaiementsQuittances.jsx'],
+  ['/paiements/nouveau', 'pages/paiements/Encaissement.jsx'],
   ['/parametres', 'pages/Parametres.jsx'],
 ];
 
@@ -50,11 +68,13 @@ for (const [loc, fichier] of cibles) {
   const { default: Page } = await server.ssrLoadModule('/src/' + fichier);
   let html;
   try {
+    // L'AuthProvider enveloppe l'application : certaines pages l'utilisent.
     html = renderToString(React.createElement(StaticRouter, { location: loc },
       React.createElement(Routes, null,
         React.createElement(Route, { path,
-          element: React.createElement(AppProvider, null,
-            React.createElement(ToastProvider, null, React.createElement(Page))) }))));
+          element: React.createElement(AuthProvider, null,
+            React.createElement(AppProvider, null,
+              React.createElement(ToastProvider, null, React.createElement(Page)))) }))));
   } catch (e) {
     problemes++;
     console.log(`ERREUR  ${loc.padEnd(30)} ${e.message.split('\n')[0]}`);

@@ -42,7 +42,7 @@ export default function SplashScreen({ onFinish, onStartFade, duration = 2000 })
         <div className="splash-logo-capsule">
           <img
             src="/logo-cag.png"
-            alt="Cabinet Albert & Gilles"
+            alt="Chabi Arnaud GOUNOU"
             className="splash-logo-image"
           />
           <div className="splash-sheen" />
@@ -50,7 +50,7 @@ export default function SplashScreen({ onFinish, onStartFade, duration = 2000 })
 
         {/* Typographie institutionnelle sobre et raffinée */}
         <div className="splash-meta">
-          <span className="splash-tag">Cabinet Albert & Gilles</span>
+          <span className="splash-tag">Chabi Arnaud GOUNOU</span>
           <h1 className="splash-heading">Gestion Locative & Immobilière</h1>
         </div>
 

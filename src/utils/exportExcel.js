@@ -3,7 +3,7 @@
 // Apple Numbers, LibreOffice et Google Sheets.
 
 import * as XLSX from "xlsx";
-import { formatDate, formatDateLongue, periodeToLabel, MOIS_LONGS } from "./format.js";
+import { formatDate, periodeToLabel } from "./format.js";
 
 /**
  * Télécharge un classeur XLSX dans le navigateur avec gestion de repli (Blob).
