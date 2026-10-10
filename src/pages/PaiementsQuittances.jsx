@@ -68,6 +68,7 @@ export default function PaiementsQuittances() {
   const [aSupprimer, setASupprimer] = useState(null);
   const [encaissement, setEncaissement] = useState(false);
   const [aVoir, setAVoir] = useState(null);
+  const [emission, setEmission] = useState(false);
 
   const lignes = useMemo(
     () =>
@@ -139,14 +140,28 @@ export default function PaiementsQuittances() {
     }
   };
 
-  const emettreManquantes = () => {
-    const creees = genererQuittancesManquantes();
-    addToast(
-      creees > 0
-        ? `${creees} quittance(s) émise(s)`
-        : "Toutes les quittances sont déjà émises",
-      "success"
-    );
+// L'émission est une écriture Firestore : elle est donc asynchrone. Sans
+  // `await`, `creees` était une promesse et la comparaison renvoyait toujours
+  // faux — le message annonçait « toutes les quittances sont déjà émises »
+  // juste après les avoir émises.
+  const emettreManquantes = async () => {
+    setEmission(true);
+    try {
+      const res = await genererQuittancesManquantes();
+      const creees = res?.ok ? res.resultat?.length || 0 : 0;
+      if (!res?.ok) {
+        addToast(res?.erreur || "Émission impossible", "error");
+        return;
+      }
+      addToast(
+        creees > 0
+          ? `${creees} quittance(s) émise(s)`
+          : "Toutes les quittances sont déjà émises",
+        "success"
+      );
+    } finally {
+      setEmission(false);
+    }
   };
 
   return (
@@ -315,8 +330,13 @@ export default function PaiementsQuittances() {
           <p className="text-muted" style={{ margin: "0 0 0.8rem", fontSize: "0.84rem" }}>
             Ces encaissements n'ont pas encore reçu de quittance.
           </p>
-          <button type="button" className="btn btn-secondary btn-small" onClick={emettreManquantes}>
-            Émettre les quittances manquantes
+          <button
+            type="button"
+            className="btn btn-secondary btn-small"
+            onClick={emettreManquantes}
+            disabled={emission}
+          >
+            {emission ? "Émission…" : "Émettre les quittances manquantes"}
           </button>
         </Card>
       ) : null}

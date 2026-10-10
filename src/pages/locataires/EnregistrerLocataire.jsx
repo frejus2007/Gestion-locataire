@@ -76,7 +76,7 @@ export default function EnregistrerLocataire({ onClose, onEnregistre }) {
     prenoms: "",
     telephone: "",
     ifu: "",
-    pieceType: "CNI",
+    pieceNature: "CNI",
     pieceNumero: "",
     // Bail
     dateDebut: AUJOURDHUI,
@@ -151,7 +151,7 @@ export default function EnregistrerLocataire({ onClose, onEnregistre }) {
           prenoms: form.prenoms.trim(),
           telephone: form.telephone.trim(),
           ifu: form.ifu.trim(),
-          pieceType: form.pieceType,
+          pieceNature: form.pieceNature,
           pieceNumero: form.pieceNumero.trim(),
           actif: true,
           notes: form.notes.trim(),
@@ -173,20 +173,20 @@ export default function EnregistrerLocataire({ onClose, onEnregistre }) {
       // 1. Le logement, si le propriétaire décrit un appartement inconnu.
       let lotId = form.lotId;
       if (lotId === LOT_NEUF) {
-        const r = creerLot();
+        const r = await creerLot();
         if (!r?.ok || !r.resultat?.id) throw new Error(r?.erreur || "Le logement n'a pas pu être créé");
         lotId = r.resultat.id;
       }
 
       // 2. Le locataire.
-      const rLoc = creerLocataire();
+      const rLoc = await creerLocataire();
       const locataireId = rLoc?.resultat?.id;
       if (!rLoc?.ok || !locataireId) {
         throw new Error(rLoc?.erreur || "Le locataire n'a pas pu être créé");
       }
 
       // 3. Le bail, qui relie le locataire au logement.
-      const rBail = creerBail(lotId, locataireId);
+      const rBail = await creerBail(lotId, locataireId);
       const bailId = rBail?.resultat?.id;
       if (!rBail?.ok || !bailId) throw new Error(rBail?.erreur || "Le bail n'a pas pu être créé");
 
@@ -316,8 +316,8 @@ export default function EnregistrerLocataire({ onClose, onEnregistre }) {
         </Field>
         <Field label="Pièce d'identité">
           <Select
-            value={form.pieceType}
-            onChange={(e) => maj("pieceType", e.target.value)}
+            value={form.pieceNature}
+            onChange={(e) => maj("pieceNature", e.target.value)}
             options={PIECES}
           />
         </Field>
