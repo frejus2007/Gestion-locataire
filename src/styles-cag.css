@@ -604,3 +604,19 @@ table.cag-releve tr.caution td { background: var(--primary-bg); }
   }
   .cag-reception-row .btn { justify-self: end; }
 }
+/* Bandeau d'erreur de connexion : doit sauter aux yeux sans masquer le contenu. */
+.cag-bandeau-erreur {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.9rem;
+  margin: 0 0 1rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--danger-border);
+  border-left: 4px solid var(--danger);
+  border-radius: var(--radius-sm);
+  background: var(--danger-light);
+  color: var(--danger);
+  font-size: 0.85rem;
+}
+.cag-bandeau-erreur strong { font-weight: 700; }

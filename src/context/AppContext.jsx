@@ -16,6 +16,11 @@ const { CATEGORIES_DEPENSE, MOIS_DE_PAYEMENT, LIGNES_FRAIS } = db;
 
 const AppContext = createContext(null);
 
+// Délai au-delà duquel une lecture est réputée morte. Assez long pour une
+// connexion mobile lente, assez court pour que le propriétaire ne croie pas à
+// un gel de l'application.
+const DELAI_LECTURE = 12000;
+
 const VIDE = {
   proprietaire: null,
   immeubles: [],
@@ -44,18 +49,30 @@ export function AppProvider({ children }) {
   // précédent, donc d'avant l'écriture.
   const refresh = useCallback(async () => {
     try {
+      const requetes = Promise.all([
+        db.getProprietaire(),
+        db.listImmeubles(),
+        db.listLots(),
+        db.listLocataires(),
+        db.listBaux(),
+        db.listLoyers(),
+        db.listPaiements(),
+        db.listDepenses(),
+        db.listQuittances(),
+      ]);
+
+      // Un canal Firestore interrompu — réseau coupé, QUIC en échec, onglet
+      // réveillé après une longue veille — laisse une promesse en suspens au
+      // lieu de la rejeter. Sans ce délai, l'interface attendrait indéfiniment
+      // et l'écran resterait figé sur un chargement qui n'aboutit jamais.
       const [proprietaire, immeubles, lots, locataires, baux, loyers, paiements, depenses, quittances] =
-        await Promise.all([
-          db.getProprietaire(),
-          db.listImmeubles(),
-          db.listLots(),
-          db.listLocataires(),
-          db.listBaux(),
-          db.listLoyers(),
-          db.listPaiements(),
-          db.listDepenses(),
-          db.listQuittances(),
+        await Promise.race([
+          requetes,
+          new Promise((_, rejeter) =>
+            setTimeout(() => rejeter(new Error("Le serveur ne répond pas")), DELAI_LECTURE)
+          ),
         ]);
+
       const lu = { proprietaire, immeubles, lots, locataires, baux, loyers, paiements, depenses, quittances };
       setDonnees(lu);
       setErreur(null);
@@ -82,6 +99,54 @@ export function AppProvider({ children }) {
       setDonnees(VIDE);
       setLoading(false);
     }
+  }, [isAuthenticated, refresh]);
+
+  // Une coupure réseau en cours d'usage ne déclenche aucune écriture : sans
+  // ce rappel, l'application continuerait d'afficher des chiffres périmés, et
+  // l'utilisateur prendrait le cache lu pour l'état réel. À la reconnexion,
+  // on relit.
+  useEffect(() => {
+    const sortir = () =>
+      setErreur("Connexion Internet perdue — les chiffres affichés peuvent être périmés");
+    const revenir = () => {
+      if (isAuthenticated) refresh();
+    };
+    window.addEventListener("offline", sortir);
+    window.addEventListener("online", revenir);
+    return () => {
+      window.removeEventListener("offline", sortir);
+      window.removeEventListener("online", revenir);
+    };
+  }, [isAuthenticated, refresh]);
+
+  // Le canal Firestore peut tomber sans que l'ordinateur se déclare hors
+  // ligne : c'est exactement ce qui arrive quand la négociation QUIC échoue.
+  // Sans relecture périodique, aucun nouvel essai n'est fait et l'écran garde
+  // indéfiniment des données périmées. On repasse toutes les deux minutes —
+  // assez pour rester invisible en usage normal, assez pour ne pas laisser
+  // l'utilisateur longtemps sur des chiffres faux.
+  useEffect(() => {
+    if (!isAuthenticated) return undefined;
+    const minuteur = setInterval(() => {
+      if (document.visibilityState === "visible" && navigator.onLine) {
+        refresh();
+      }
+    }, 120000);
+    return () => clearInterval(minuteur);
+  }, [isAuthenticated, refresh]);
+
+  // Un onglet rouvert après une longue veille doit relire sans attendre.
+  useEffect(() => {
+    if (!isAuthenticated) return undefined;
+    const relire = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    document.addEventListener("visibilitychange", relire);
+    window.addEventListener("focus", relire);
+    return () => {
+      document.removeEventListener("visibilitychange", relire);
+      window.removeEventListener("focus", relire);
+    };
   }, [isAuthenticated, refresh]);
 
   // Exécute une écriture, recharge, et propage le résultat à l'appelant.

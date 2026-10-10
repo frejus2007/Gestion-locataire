@@ -28,9 +28,26 @@ export const storage = configure ? getStorage(app) : null;
 // retombe automatiquement en mémoire si IndexedDB est indisponible — contrairement
 // à l'ancien `enableIndexedDbPersistence`, qui bloquait le client au lieu de
 // dégrader proprement.
+//
+// `experimentalForceLongPolling` contourne HTTP/3. En production, Firestore
+// ouvre un canal de streaming que le navigateur tente d'établir en QUIC ; sur
+// certains réseaux (et c'est le cas depuis Netlify), cette négociation échoue
+// en `ERR_QUIC_PROTOCOL_ERROR`, suivie d'un canal invalide — les données
+// n'arrivent plus. Le SDK détecte normalement ce cas, mais sa détection ne voit
+// pas cette panne : il faut donc le forcer. Le prix est un aller-retour par
+// lecture au lieu d'un canal permanent ; sur une application de gestion
+// locative, la différence est imperceptible.
+//
+// Réglable par variable d'environnement : si un jour le réseau ne pose plus
+// de problème, `VITE_FIREBASE_LONG_POLLING=false` suffit à revenir au
+// streaming, sans toucher au code.
+const longPolling = import.meta.env.VITE_FIREBASE_LONG_POLLING !== "false";
+
 export const db = configure
   ? initializeFirestore(app, {
       localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+      experimentalForceLongPolling: longPolling,
+      experimentalAutoDetectLongPolling: !longPolling,
     })
   : null;
 

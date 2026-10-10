@@ -41,7 +41,7 @@ const NAV_MOBILE = [
 export default function Layout() {
   const [menuOuvert, setMenuOuvert] = useState(false);
   const [sombre, setSombre] = useState(() => localStorage.getItem("theme") === "dark");
-  const { impayesGlobaux } = useApp();
+  const { impayesGlobaux, erreur, refresh: rafraichir } = useApp();
   const { logout } = useAuth();
   const { addToast } = useToast();
   const navigate = useNavigate();
@@ -197,6 +197,21 @@ export default function Layout() {
       )}
 
       <main className="main-content">
+        {/* Une base injoignable ne doit pas se déguiser en « 0 FCFA » : le
+            propriétaire croirait son parc vide, alors que rien n'a été lu.
+            L'erreur reste affichée jusqu'à la prochaine lecture réussie. */}
+        {erreur ? (
+          <div className="cag-bandeau-erreur" role="alert">
+            <span>
+              <strong>Connexion à la base impossible.</strong> Les chiffres
+              affichés peuvent être incomplets — ils ne viennent pas du serveur.{" "}
+              {erreur}
+            </span>
+            <button type="button" onClick={rafraichir} className="btn btn-small">
+              Réessayer
+            </button>
+          </div>
+        ) : null}
         <div key={location.pathname} className="page-transition-wrapper">
           <Outlet />
         </div>
