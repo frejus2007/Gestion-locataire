@@ -125,9 +125,15 @@ function fraisDefautBail(bail) {
   return Object.fromEntries(POSTES_FRAIS.map((cle) => [cle, Number(f[cle]) || 0]));
 }
 
-const periodeDebutBail = (bail) => bail.dateDebut.slice(0, 7);
+// Un bail sans date exploitable — document ancien, import incomplet, saisie
+// interrompue — faisait exploser toute la lecture : la période devient
+// undefined, et le calcul des mois échouait sur `Cannot read properties
+// of undefined`. On retombe sur la période courante plutôt que de laisser
+// l'écran entier échouer ; le bail reste inexact mais l'application reste
+// lisible, ce qui permet de le corriger au lieu de la rouvrir.
+const periodeDebutBail = (bail) => String(bail?.dateDebut || "").slice(0, 7) || periodeCourante();
 const periodeFinBail = (bail, max = periodeCourante()) =>
-  bail.dateFin ? bail.dateFin.slice(0, 7) : max;
+  bail?.dateFin ? String(bail.dateFin).slice(0, 7) : max;
 
 function bailCouvre(bail, periode, max = periodeCourante()) {
   return (
