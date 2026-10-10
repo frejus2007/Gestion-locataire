@@ -212,8 +212,28 @@ export async function updateImmeuble(id, data) {
   return lireUn(COLLECTIONS.immeubles, id);
 }
 
+/**
+ * Supprime un immeuble et ses lots.
+ *
+ * Les baux et les loyers qui s'y rattachent ne sont PAS supprimés : un
+ * immeuble porte un historique de perception, on ne l'efface pas par un
+ * geste de nettoyage. Seuls les lots disparaissent, et uniquement s'ils ne
+ * sont pas loués — un lot occupé est conservé, sinon sa suppression
+ * laisserait un bail sans logement.
+ */
 export async function deleteImmeuble(id) {
-  await deleteDoc(doc(db, COLLECTIONS.immeubles, id));
+  const [lots, baux] = await Promise.all([
+    lireCollection(COLLECTIONS.lots),
+    lireCollection(COLLECTIONS.baux),
+  ]);
+
+  const lotsLoue = new Set(baux.map((b) => b.lotId));
+  const aSupprimer = lots.filter((l) => l.immeubleId === id && !lotsLoue.has(l.id));
+
+  await Promise.all([
+    ...aSupprimer.map((l) => deleteDoc(doc(db, COLLECTIONS.lots, l.id))),
+    deleteDoc(doc(db, COLLECTIONS.immeubles, id)),
+  ]);
 }
 
 // --- Lots ---
@@ -232,7 +252,18 @@ export async function updateLot(id, data) {
   return lireUn(COLLECTIONS.lots, id);
 }
 
+/**
+ * Supprime un lot, s'il est libre.
+ *
+ * Un lot occupé est refusé : c'est la protection qui manquait, le bouton de
+ * suppression n'en tientait aucun compte. Supprimer le logement d'un locataire
+ * laisserait son bail sans adresse ni loyer de référence.
+ */
 export async function deleteLot(id) {
+  const baux = await lireCollection(COLLECTIONS.baux);
+  if (baux.some((b) => b.lotId === id)) {
+    throw new Error("Ce logement est occupé : clôturez d'abord le bail du locataire.");
+  }
   await deleteDoc(doc(db, COLLECTIONS.lots, id));
 }
 
@@ -252,8 +283,46 @@ export async function updateLocataire(id, data) {
   return lireUn(COLLECTIONS.locataires, id);
 }
 
+/**
+ * Supprime un locataire et tout ce qui s'y rattache.
+ *
+ * Firestore n'a pas de suppression en cascade : ne retirer que la fiche
+ * laisserait le bail derrière, or la liste des locataires est bâtie sur les
+ * baux — la ligne survivrait, sans nom. On supprime donc, dans l'ordre, les
+ * pièces dépendantes puis les pièces maîtresses :
+ *   quittances → paiements → loyers → baux → locataire
+ *
+ * L'ordre importe : on part de ce qui dépend pour ne jamais laisser un
+ * paiement orphelin pointant sur un bail disparu.
+ */
 export async function deleteLocataire(id) {
-  await deleteDoc(doc(db, COLLECTIONS.locataires, id));
+  const [baux, loyers, paiements, quittances] = await Promise.all([
+    lireCollection(COLLECTIONS.baux),
+    lireCollection(COLLECTIONS.loyers),
+    lireCollection(COLLECTIONS.paiements),
+    lireCollection(COLLECTIONS.quittances),
+  ]);
+
+  const bauxDuLocataire = baux.filter((b) => b.locataireId === id);
+  const bailIds = new Set(bauxDuLocataire.map((b) => b.id));
+
+  const paiementsDuLocataire = paiements.filter(
+    (p) => p.locataireId === id || bailIds.has(p.bailId)
+  );
+  const paiementIds = new Set(paiementsDuLocataire.map((p) => p.id));
+
+  const quittancesLiees = quittances.filter(
+    (q) => q.locataireId === id || bailIds.has(q.bailId) || paiementIds.has(q.paiementId)
+  );
+  const loyersDuBail = loyers.filter((l) => bailIds.has(l.bailId));
+
+  await Promise.all([
+    ...quittancesLiees.map((q) => deleteDoc(doc(db, COLLECTIONS.quittances, q.id))),
+    ...paiementsDuLocataire.map((p) => deleteDoc(doc(db, COLLECTIONS.paiements, p.id))),
+    ...loyersDuBail.map((l) => deleteDoc(doc(db, COLLECTIONS.loyers, l.id))),
+    ...bauxDuLocataire.map((b) => deleteDoc(doc(db, COLLECTIONS.baux, b.id))),
+    deleteDoc(doc(db, COLLECTIONS.locataires, id)),
+  ]);
 }
 
 // --- Baux ---
@@ -272,8 +341,30 @@ export async function updateBail(id, data) {
   return lireUn(COLLECTIONS.baux, id);
 }
 
+/**
+ * Supprime un bail et ses rents, encaissements et quittances.
+ * Même raison que pour le locataire : ces pièces ne sont pas exploitables
+ * sans le bail, et les laisser produirait des totaux incohérents.
+ */
 export async function deleteBail(id) {
-  await deleteDoc(doc(db, COLLECTIONS.baux, id));
+  const [loyers, paiements, quittances] = await Promise.all([
+    lireCollection(COLLECTIONS.loyers),
+    lireCollection(COLLECTIONS.paiements),
+    lireCollection(COLLECTIONS.quittances),
+  ]);
+
+  const paiementIds = new Set(paiements.filter((p) => p.bailId === id).map((p) => p.id));
+
+  await Promise.all([
+    ...quittances
+      .filter((q) => q.bailId === id || paiementIds.has(q.paiementId))
+      .map((q) => deleteDoc(doc(db, COLLECTIONS.quittances, q.id))),
+    ...paiements
+      .filter((p) => p.bailId === id)
+      .map((p) => deleteDoc(doc(db, COLLECTIONS.paiements, p.id))),
+    ...loyers.filter((l) => l.bailId === id).map((l) => deleteDoc(doc(db, COLLECTIONS.loyers, l.id))),
+    deleteDoc(doc(db, COLLECTIONS.baux, id)),
+  ]);
 }
 
 // --- Dépenses ---
