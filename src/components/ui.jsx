@@ -1,3 +1,4 @@
+import { cleDepuisTexte, POSTES_CAUTION } from "../utils/format";
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
@@ -257,3 +258,48 @@ export function ErrorBanner({ message }) {
     </div>
   );
 }
+/** Case à cocher. */
+export function Checkbox({ checked, onChange, label, disabled }) {
+  return (
+    <label className="cag-case">
+      <input
+        type="checkbox"
+        checked={Boolean(checked)}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+      <span>{label}</span>
+    </label>
+  );
+}
+
+/**
+ * Choix des postes couverts par la caution.
+ *
+ * Une liste déroulante imposait de choisir parmi des combinaisons figées —
+ * impossible de noter « loyer, eau et ordures », absent de la liste, et
+ * aucune édition libre. Des cases à cocher couvrent toutes les combinaisons.
+ */
+export function ChoixCaution({ valeur, onChange }) {
+  const coches = Array.isArray(valeur) ? valeur : cleDepuisTexte(valeur);
+
+  const basculer = (cle, coche) => {
+    onChange(coche ? [...new Set([...coches, cle])] : coches.filter((c) => c !== cle));
+  };
+
+  return (
+    <div className="cag-cases">
+      {POSTES_CAUTION.map((p) => (
+        <Checkbox
+          key={p.cle}
+          label={p.label}
+          checked={coches.includes(p.cle)}
+          onChange={(coche) => basculer(p.cle, coche)}
+        />
+      ))}
+    </div>
+  );
+}
+
+
+

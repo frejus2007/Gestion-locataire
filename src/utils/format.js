@@ -325,3 +325,56 @@ export function couleurAvatar(nom) {
   }
   return COULEURS_AVATAR[Math.abs(hash) % COULEURS_AVATAR.length];
 }
+// --- Caution : postes couverts ---
+//
+// La caution désigne les mêmes postes que l'échéance, ce qui évite deux
+// nomenclatures qui ne concordent jamais.
+
+export const POSTES_CAUTION = [
+  { cle: "loyer", label: "Loyer" },
+  { cle: "eau", label: "Eau" },
+  { cle: "electricite", label: "Électricité" },
+  { cle: "ordures", label: "Ordures" },
+  { cle: "degats", label: "Dégâts" },
+  { cle: "autre", label: "Autre" },
+];
+
+/** Libellés lisibles pour la ligne « CAUTION SUR : » de la quittance. */
+const LIBELLES_CAUTION = Object.fromEntries(POSTES_CAUTION.map((p) => [p.cle, p.label]));
+const LIBELLES_PAR_LABEL = Object.fromEntries(
+  POSTES_CAUTION.map((p) => [p.label.toLowerCase(), p.cle])
+);
+const CLES_CAUTION = new Set(POSTES_CAUTION.map((p) => p.cle));
+
+/**
+ * Transforme la valeur de caution en texte.
+ *
+ * Accepte la forme actuelle (liste de clés) comme celle des saisies
+ * antérieures (« Loyer + eau ») : ces bail-là existent déjà en base et ne
+ * doivent pas s'afficher bruts sur un reçu.
+ */
+export function cautionSurLibelle(valeur) {
+  if (!valeur) return "";
+  if (Array.isArray(valeur)) {
+    return valeur
+      .filter(Boolean)
+      .map((cle) => LIBELLES_CAUTION[cle] || cle)
+      .join(", ");
+  }
+  return String(valeur)
+    .split(/\s*\+\s*/)
+    .map((part) => LIBELLES_CAUTION[part.trim().toLowerCase()] || part.trim())
+    .filter(Boolean)
+    .join(", ");
+}
+
+/** Convertit une ancienne valeur texte (« Loyer + eau ») en clés. */
+export function cleDepuisTexte(valeur) {
+  if (!valeur) return [];
+  return String(valeur)
+    .split(/\s*\+\s*/)
+    .map((part) => part.trim().toLowerCase())
+    .map((part) => LIBELLES_PAR_LABEL[part] || part)
+    .filter((part) => CLES_CAUTION.has(part));
+}
+

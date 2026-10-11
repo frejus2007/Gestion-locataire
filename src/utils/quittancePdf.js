@@ -17,7 +17,7 @@
 
 import { jsPDF } from "jspdf";
 import { LIGNES_FRAIS } from "../data/db.firebase.js";
-import { amountToWords, formatMoneyPlain } from "./format.js";
+import { amountToWords, formatMoneyPlain, cautionSurLibelle } from "./format.js";
 import { tracerCodeBarre } from "./codeBarre.js";
 
 const POSTES_FRAIS = LIGNES_FRAIS.map((l) => l.key);
@@ -272,10 +272,14 @@ export function construireQuittance(q, options = {}) {
   doc.text(`N° de séquence : ${numeroQuittance}`, COL, 58, { maxWidth: R - COL });
   doc.text(`DATE : ${frDate(q.datePaiement)}`, COL, 71, { maxWidth: R - COL });
   doc.text(`MOIS DE : ${periode || "—"}`, COL, 84, { maxWidth: R - COL });
-  if (cautionSur) {
+  // La caution vient désormais d'une liste de cases cochées ; elle est rendue
+  // en texte lisible. Les baux saisis avant ce changement portent une chaîne,
+  // que `cautionSurLibelle` sait aussi traduire.
+  const libelleCaution = cautionSurLibelle(cautionSur);
+  if (libelleCaution) {
     const largeur = doc.getTextWidth("CAUTION SUR : ");
     doc.text("CAUTION SUR : ", COL, 97);
-    doc.setFontSize(7).text(`(${cautionSur})`, COL + largeur + 2, 96.5);
+    doc.setFontSize(7).text(`(${libelleCaution})`, COL + largeur + 2, 96.5);
     doc.setFontSize(10);
   }
 

@@ -11,7 +11,7 @@ import { useParams, Link, useNavigate } from "react-router-dom";
 import { Save, X, Users, Home, AlertTriangle, Calendar, Sparkles } from "lucide-react";
 import { useApp } from "../../context/AppContext";
 import { useToast } from "../../context/ToastContext";
-import { Card, Field, TextInput, Select, ErrorBanner, EmptyState } from "../../components/ui";
+import { Card, Field, TextInput, Select, ErrorBanner, EmptyState, ChoixCaution } from "../../components/ui";
 import {
   formatMoney,
   periodeCourante,
@@ -30,17 +30,6 @@ const CAUTIONS = [
 
 // Ce que la caution couvre : repris tel quel sur la quittance officielle,
 // à la ligne « CAUTION SUR : ».
-const CAUTIONS_SUR = [
-  { id: "", label: "— non précisé —" },
-  { id: "Loyer", label: "Loyer" },
-  { id: "Eau", label: "Eau" },
-  { id: "Électricité", label: "Électricité" },
-  { id: "Loyer + eau", label: "Loyer et eau" },
-  { id: "Loyer + électricité", label: "Loyer et électricité" },
-  { id: "Loyer + eau + électricité", label: "Loyer, eau et électricité" },
-  { id: "Autre", label: "Autre" },
-];
-
 // Date du jour, figée au chargement : évite de recalculer pendant le rendu.
 const AUJOURDHUI = new Date().toISOString().slice(0, 10);
 
@@ -278,13 +267,10 @@ cautionVersee: Number(form.cautionVersee) || 0,
                 />
               </Field>
 
-              {/* Repris tel quel sur la quittance officielle, ligne « CAUTION SUR : ». */}
+              {/* Cases à cocher : la liste déroulante n'offrait que des
+                  combinaisons figées et interdisait toute écriture libre. */}
               <Field label="La caution couvre" hint="Imprimé sur la quittance">
-                <Select
-                  value={form.cautionSur || ""}
-                  onChange={set("cautionSur")}
-                  options={CAUTIONS_SUR}
-                />
+                <ChoixCaution valeur={form.cautionSur} onChange={(v) => setForm((f) => ({ ...f, cautionSur: v }))} />
               </Field>
 
               <Field label="État de la caution" className="span-2">

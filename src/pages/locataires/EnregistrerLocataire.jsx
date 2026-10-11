@@ -14,7 +14,7 @@
 
 import { useMemo, useState } from "react";
 import { Check, Home, IdCard, FileSignature, KeyRound, Receipt } from "lucide-react";
-import { Modal, Field, TextInput, Select, ErrorBanner } from "../../components/ui";
+import { Modal, Field, TextInput, Select, ErrorBanner, ChoixCaution } from "../../components/ui";
 import { useApp } from "../../context/AppContext";
 import { useToast } from "../../context/ToastContext";
 import { postesALZero } from "../../data/db.firebase";
@@ -33,17 +33,6 @@ const CAUTIONS = [
   { id: "non-versee", label: "Non versée" },
   { id: "deposee", label: "Déposée — conservée" },
   { id: "retenue", label: "Retenue (dommages, impayés)" },
-];
-
-const CAUTIONS_SUR = [
-  { id: "", label: "— non précisé —" },
-  { id: "Loyer", label: "Loyer" },
-  { id: "Eau", label: "Eau" },
-  { id: "Électricité", label: "Électricité" },
-  { id: "Loyer + eau", label: "Loyer et eau" },
-  { id: "Loyer + électricité", label: "Loyer et électricité" },
-  { id: "Loyer + eau + électricité", label: "Loyer, eau et électricité" },
-  { id: "Autre", label: "Autre" },
 ];
 
 const LOT_NEUF = "nouveau";
@@ -387,10 +376,9 @@ export default function EnregistrerLocataire({ onClose, onEnregistre }) {
           />
         </Field>
         <Field label="La caution couvre" className="span-2">
-          <Select
-            value={form.cautionSur}
-            onChange={(e) => maj("cautionSur", e.target.value)}
-            options={CAUTIONS_SUR}
+          <ChoixCaution
+            valeur={form.cautionSur}
+            onChange={(v) => maj("cautionSur", v)}
           />
         </Field>
       </div>

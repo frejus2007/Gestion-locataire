@@ -329,6 +329,7 @@ export default function ImmeubleDetail() {
                   <th className="num">Loyer du bail</th>
                   <th>Locataire</th>
                   <th className="num">Solde</th>
+                  <th>Notes</th>
                   <th />
                 </tr>
               </thead>
@@ -366,6 +367,11 @@ export default function ImmeubleDetail() {
                         ) : (
                           <Badge classe="badge-green">À jour</Badge>
                         )}
+                      </td>
+                      {/* Les notes du logement — Oftenues, accessibilité, particularités —
+                          n'étaient visibles nulle part, alors qu'elles se saisissent. */}
+                      <td className="text-muted" style={{ fontSize: "0.8rem", maxWidth: "220px" }}>
+                        {l.notes || "—"}
                       </td>
                       <td className="actions">
                         {bail && (

@@ -47,43 +47,70 @@ export function AppProvider({ children }) {
   // du document qu'il vient de créer (un loyer à imputer, un lot à ouvrir).
   // Se fier à l'état du composant ne marcherait pas — il date du rendu
   // précédent, donc d'avant l'écriture.
+  // Les lectures de chaque collection, réutilisées par `refresh` et par
+  // `refreshPartiel`. Isolées ici pour que les deux chemins partagent
+  // exactement les mêmes appels.
+  const LECTEURS = {
+    proprietaire: () => db.getProprietaire(),
+    immeubles: () => db.listImmeubles(),
+    lots: () => db.listLots(),
+    locataires: () => db.listLocataires(),
+    baux: () => db.listBaux(),
+    loyers: () => db.listLoyers(),
+    paiements: () => db.listPaiements(),
+    depenses: () => db.listDepenses(),
+    quittances: () => db.listQuittances(),
+  };
+
+  const TOUTES = Object.keys(LECTEURS);
+
+  // Un canal Firestore interrompu — réseau coupé, onglet réveillé après une
+  // longue veille — laisse une promesse en suspens au lieu de la rejeter. Sans
+  // ce délai, l'interface attendrait indéfiniment.
+  const avecDelai = (promesses) =>
+    Promise.race([
+      promesses,
+      new Promise((_, rejeter) =>
+        setTimeout(() => rejeter(new Error("Le serveur ne répond pas")), DELAI_LECTURE)
+      ),
+    ]);
+
+  /** Relit tout. Réservé au démarrage et aux retours d、强 onglet. */
   const refresh = useCallback(async () => {
     try {
-      const requetes = Promise.all([
-        db.getProprietaire(),
-        db.listImmeubles(),
-        db.listLots(),
-        db.listLocataires(),
-        db.listBaux(),
-        db.listLoyers(),
-        db.listPaiements(),
-        db.listDepenses(),
-        db.listQuittances(),
-      ]);
-
-      // Un canal Firestore interrompu — réseau coupé, QUIC en échec, onglet
-      // réveillé après une longue veille — laisse une promesse en suspens au
-      // lieu de la rejeter. Sans ce délai, l'interface attendrait indéfiniment
-      // et l'écran resterait figé sur un chargement qui n'aboutit jamais.
-      const [proprietaire, immeubles, lots, locataires, baux, loyers, paiements, depenses, quittances] =
-        await Promise.race([
-          requetes,
-          new Promise((_, rejeter) =>
-            setTimeout(() => rejeter(new Error("Le serveur ne répond pas")), DELAI_LECTURE)
-          ),
-        ]);
-
-      const lu = { proprietaire, immeubles, lots, locataires, baux, loyers, paiements, depenses, quittances };
+      const cles = TOUTES;
+      const valeurs = await avecDelai(Promise.all(cles.map((c) => LECTEURS[c]())));
+      const lu = Object.fromEntries(cles.map((c, i) => [c, valeurs[i]]));
       setDonnees(lu);
       setErreur(null);
       return lu;
     } catch (e) {
-      // L'écran doit rester utilisable : on note l'erreur et on garde les
-      // dernières données connues plutôt que de tout vider.
       setErreur(e.message);
       return null;
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  /**
+   * Ne relit que les collections que l'écriture a pu toucher.
+   *
+   * C'est le dernier poste de lenteur : après un simple enregistrement de
+   * locataire, l'application relisait les neuf collections — neuf requêtes
+   * d'environ une seconde — pour n'en voir changer qu'une ou deux.
+   */
+  const refreshPartiel = useCallback(async (cles) => {
+    const utiles = cles.filter((c) => LECTEURS[c]);
+    if (!utiles.length) return null;
+    try {
+      const valeurs = await avecDelai(Promise.all(utiles.map((c) => LECTEURS[c]())));
+      const maj = Object.fromEntries(utiles.map((c, i) => [c, valeurs[i]]));
+      setDonnees((d) => ({ ...d, ...maj }));
+      setErreur(null);
+      return maj;
+    } catch (e) {
+      setErreur(e.message);
+      return null;
     }
   }, []);
 
@@ -149,32 +176,32 @@ export function AppProvider({ children }) {
     };
   }, [isAuthenticated, refresh]);
 
-  // Exécute une écriture, recharge, et propage le résultat à l'appelant.
+  // Exécute une écriture, recharge ce qui a changé, et propage le résultat.
   // Toujours `{ ok, resultat }` ou `{ ok: false, erreur }` : les pages
   // testent `res.ok` et affichent `res.erreur`.
   //
-  // `resultat` est l'effet de l'écriture ; `donnees` est l'état complet relu
-  // juste après, ce qui permet à l'appelant de récupérer un document créé
-  // (un loyer généré, un lot à ouvrir) sans rely sur son rendu précédent.
+  // `coles` liste les collections que l'action a pu modifier. Les énumérer est
+  // indispensable : une relecture trop large coûte des secondes, une relecture
+  // trop étroite afficherait des données périmées jusqu'à la relecture
+  // périodique. Le oubli le plus coûteux étant l'encaissement, qui touche les
+  // loyers autant que les paiements, il est traité explicitement.
   const run = useCallback(
-    async (action) => {
+    async (action, coles = TOUTES) => {
       setLoading(true);
       try {
         const resultat = await action();
-        const donnees = await refresh();
+        const donnees = await refreshPartiel(coles);
         setLoading(false);
         return { ok: true, resultat, donnees };
       } catch (e) {
-        await refresh();
+        await refreshPartiel(coles);
         setErreur(e.message);
         setLoading(false);
         return { ok: false, erreur: e.message };
       }
     },
-    [refresh]
+    [refreshPartiel]
   );
-
-  const sel = useMemo(() => createSelecteurs(donnees), [donnees]);
 
   const actions = useMemo(
     () => ({
@@ -182,44 +209,64 @@ export function AppProvider({ children }) {
       run,
 
       // Propriétaire
-      saveProprietaire: (champs) => run(() => db.updateProprietaire(champs)),
+      saveProprietaire: (champs) => run(() => db.updateProprietaire(champs), ["proprietaire"]),
 
-      // Immeubles
+      // Immeubles : la suppression emporte les lots libres.
       saveImmeuble: (data, id = null) =>
-        run(() => (id ? db.updateImmeuble(id, data) : db.createImmeuble(data))),
-      removeImmeuble: (id) => run(() => db.deleteImmeuble(id)),
+        run(
+          () => (id ? db.updateImmeuble(id, data) : db.createImmeuble(data)),
+          ["immeubles", "lots"]
+        ),
+      removeImmeuble: (id) => run(() => db.deleteImmeuble(id), ["immeubles", "lots"]),
 
       // Lots
-      saveLot: (data, id = null) => run(() => (id ? db.updateLot(id, data) : db.createLot(data))),
-      removeLot: (id) => run(() => db.deleteLot(id)),
+      saveLot: (data, id = null) =>
+        run(() => (id ? db.updateLot(id, data) : db.createLot(data)), ["lots"]),
+      removeLot: (id) => run(() => db.deleteLot(id), ["lots"]),
 
-      // Locataires
+      // Locataires : la suppression emporte bail, loyers, paiements et quittances.
       saveLocataire: (data, id = null) =>
-        run(() => (id ? db.updateLocataire(id, data) : db.createLocataire(data))),
-      removeLocataire: (id) => run(() => db.deleteLocataire(id)),
+        run(
+          () => (id ? db.updateLocataire(id, data) : db.createLocataire(data)),
+          id ? ["locataires"] : ["locataires", "baux", "loyers", "paiements", "quittances"]
+        ),
+      removeLocataire: (id) =>
+        run(() => db.deleteLocataire(id), ["locataires", "baux", "loyers", "paiements", "quittances"]),
 
-      // Baux
-      saveBail: (data, id = null) => run(() => (id ? db.updateBail(id, data) : db.createBail(data))),
-      removeBail: (id) => run(() => db.deleteBail(id)),
+      // Baux : leurs loyers suivent, puisqu'ils en dépendent.
+      saveBail: (data, id = null) =>
+        run(
+          () => (id ? db.updateBail(id, data) : db.createBail(data)),
+          ["baux", "lots", "locataires", "loyers"]
+        ),
+      removeBail: (id) => run(() => db.deleteBail(id), ["baux", "loyers", "paiements", "quittances"]),
       genererDepuis: (bailId, periodeDebut, periodeFin = null) =>
-        run(() => db.genererLoyersDepuis(bailId, periodeDebut, periodeFin)),
-      genererPeriode: (periode) => run(() => db.genererLoyersPourPeriode(periode)),
+        run(() => db.genererLoyersDepuis(bailId, periodeDebut, periodeFin), ["loyers", "baux"]),
+      genererPeriode: (periode) => run(() => db.genererLoyersPourPeriode(periode), ["loyers", "baux"]),
 
-      // Paiements
-      enregistrerPaiement: (data) => run(() => db.enregistrerPaiement(data)),
-      removePaiement: (id) => run(() => db.deletePaiement(id)),
+      // Paiements : l'imputation change le statut des loyers concernés.
+      enregistrerPaiement: (data) =>
+        run(() => db.enregistrerPaiement(data), ["paiements", "loyers", "quittances", "baux"]),
+      removePaiement: (id) =>
+        run(() => db.deletePaiement(id), ["paiements", "loyers", "quittances"]),
 
       // Dépenses
       saveDepense: (data, id = null) =>
-        run(() => (id ? db.updateDepense(id, data) : db.createDepense(data))),
-      removeDepense: (id) => run(() => db.deleteDepense(id)),
+        run(() => (id ? db.updateDepense(id, data) : db.createDepense(data)), ["depenses"]),
+      removeDepense: (id) => run(() => db.deleteDepense(id), ["depenses"]),
 
       // Quittances
-      genererQuittance: (paiementId) => run(() => db.genererQuittance(paiementId)),
-      genererQuittancesManquantes: () => run(() => db.genererQuittancesManquantes()),
+      genererQuittance: (paiementId) => run(() => db.genererQuittance(paiementId), ["quittances", "counters"]),
+      genererQuittancesManquantes: () =>
+        run(() => db.genererQuittancesManquantes(), ["quittances", "counters"]),
     }),
     [refresh, run]
   );
+
+
+  // Sélecteurs : soldes, statuts, totaux. Recalculés à chaque changement de
+  // données, jamais par les composants.
+  const sel = useMemo(() => createSelecteurs(donnees), [donnees]);
 
   // Listes de référence : constantes, redefinees hors du useMemo pour ne pas
   // devenir des dependances.

@@ -154,9 +154,27 @@ export default function LocataireForm() {
       if (!resLoc.ok) throw new Error(resLoc.erreur || "Le locataire n'a pas pu être enregistré");
       const locataireId = id || resLoc.resultat.id;
 
-      // 2. Le logement, s'il n'existe pas encore.
+      // 2. Le logement. Avant d'en créer un, on cherche si cette chambre
+      //    existe déjà dans l'immeuble : saisir deux fois « APPARTEMENT 1 »
+      //    créait deux lots distincts, et le même locataire pouvait alors être
+      //    enregistré autant de fois qu'on le répétait — la chambre Passed
+      //    inoccupée pendant ce temps. On réutilise celle qui existe.
       let lotId = form.lotId;
       if (lotId === LOT_NEUF) {
+        const designation = form.nouveauLot.trim().toLowerCase();
+        const dejaLa = lots.find(
+          (l) =>
+            l.immeubleId === form.immeubleId &&
+            String(l.designation || "").trim().toLowerCase() === designation
+        );
+        if (dejaLa) {
+          if (bailActifDuLot(dejaLa.id)) {
+            throw new Error(
+              `« ${form.nouveauLot.trim()} » est déjà occupé. Choisissez-le dans la liste plutôt que d'en créer un second.`
+            );
+          }
+          lotId = dejaLa.id;
+        } else {
         const resLot = await saveLot({
           immeubleId: form.immeubleId || lotChoisi?.immeubleId || "",
           designation: form.nouveauLot.trim(),
@@ -166,6 +184,18 @@ export default function LocataireForm() {
         });
         if (!resLot.ok) throw new Error(resLot.erreur || "Le logement n'a pas pu être créé");
         lotId = resLot.resultat.id;
+        }
+      }
+
+      // Un locataire déjà établi sur ce logement ne peut pas l'être une
+      // seconde fois : la chambre aurait deux loyers et une facture unique.
+      if (bailActifDuLot(lotId)) {
+        throw new Error(
+          "Ce logement est déjà occupé par un bail en cours. Choisissez un autre logement."
+        );
+      }
+      if (!bailDuLocataire && baux.some((b) => b.locataireId === locataireId && b.lotId === lotId)) {
+        throw new Error("Ce locataire est déjà associé à ce logement.");
       }
 
       // 3. Le bail, qui relie le locataire à son logement. Il est créé ici

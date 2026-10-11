@@ -28,6 +28,10 @@ import {
   addDoc,
   runTransaction,
   serverTimestamp,
+  writeBatch,
+  query,
+  where,
+  limit,
 } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { comparePeriode, periodeCourante, periodeDecalee } from "../utils/format.js";
@@ -105,9 +109,45 @@ const COLLECTIONS = {
   depenses: "depenses",
 };
 
-async function lireCollection(nom) {
+// --- Cache de lecture ---
+//
+// Chaque aller-retour coûte près d'une seconde depuis une connexion
+// intercontinentale. L'application relisait les mêmes collections sans
+// cesse — après chaque écriture, à chaque changement d'onglet, toutes les
+// deux minutes — et la génération des loyers relisait les baux et les loyers
+// à chaque mois de la période. Le total se comptait en dizaines de requêtes.
+//
+// On garde donc en mémoire le résultat d'une lecture, et on n'invalide que la
+// collection réellement modifiée. La première lecture après une écriture
+// repart du serveur ; les suivantes sont gratuites.
+//
+// `DUREE_CACHE` borne lapéremption même en l'absence d'écriture : c'est ce qui
+// permet à un second appareil de voir ses saisies.
+
+// Secondes pendant lesquelles une lecture est réutilisée.
+const DUREE_CACHE = 30;
+const cache = new Map();
+
+/** Omet une collection du cache : à appeler après toute écriture dessus. */
+export function invalider(nom) {
+  cache.delete(nom);
+}
+
+function invaliderToutes() {
+  cache.clear();
+}
+
+async function lireCollection(nom, { frais = false } = {}) {
+  if (!frais) {
+    const enCache = cache.get(nom);
+    if (enCache && Date.now() - enCache.t < DUREE_CACHE * 1000) {
+      return enCache.donnees;
+    }
+  }
   const snap = await getDocs(collection(db, nom));
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const donnees = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  cache.set(nom, { t: Date.now(), donnees });
+  return donnees;
 }
 
 async function lireUn(nom, id) {
@@ -208,12 +248,14 @@ export const listImmeubles = () => lireCollection(COLLECTIONS.immeubles);
 export const getImmeuble = (id) => lireUn(COLLECTIONS.immeubles, id);
 
 export async function createImmeuble(data) {
+  invaliderToutes();
   const id = data.id || nextId("imm");
   await setDoc(doc(db, COLLECTIONS.immeubles, id), { ...data, id });
   return lireUn(COLLECTIONS.immeubles, id);
 }
 
 export async function updateImmeuble(id, data) {
+  invaliderToutes();
   await updateDoc(doc(db, COLLECTIONS.immeubles, id), { ...data, updatedAt: serverTimestamp() });
   return lireUn(COLLECTIONS.immeubles, id);
 }
@@ -228,6 +270,7 @@ export async function updateImmeuble(id, data) {
  * laisserait un bail sans logement.
  */
 export async function deleteImmeuble(id) {
+  invaliderToutes();
   const [lots, baux] = await Promise.all([
     lireCollection(COLLECTIONS.lots),
     lireCollection(COLLECTIONS.baux),
@@ -248,12 +291,14 @@ export const listLots = () => lireCollection(COLLECTIONS.lots);
 export const getLot = (id) => lireUn(COLLECTIONS.lots, id);
 
 export async function createLot(data) {
+  invaliderToutes();
   const id = data.id || nextId("lot");
   await setDoc(doc(db, COLLECTIONS.lots, id), { ...data, id });
   return lireUn(COLLECTIONS.lots, id);
 }
 
 export async function updateLot(id, data) {
+  invaliderToutes();
   await updateDoc(doc(db, COLLECTIONS.lots, id), { ...data, updatedAt: serverTimestamp() });
   return lireUn(COLLECTIONS.lots, id);
 }
@@ -266,6 +311,7 @@ export async function updateLot(id, data) {
  * laisserait son bail sans adresse ni loyer de référence.
  */
 export async function deleteLot(id) {
+  invaliderToutes();
   const baux = await lireCollection(COLLECTIONS.baux);
   if (baux.some((b) => b.lotId === id)) {
     throw new Error("Ce logement est occupé : clôturez d'abord le bail du locataire.");
@@ -279,12 +325,14 @@ export const listLocataires = () => lireCollection(COLLECTIONS.locataires);
 export const getLocataire = (id) => lireUn(COLLECTIONS.locataires, id);
 
 export async function createLocataire(data) {
+  invaliderToutes();
   const id = data.id || nextId("loc");
   await setDoc(doc(db, COLLECTIONS.locataires, id), { ...data, id });
   return lireUn(COLLECTIONS.locataires, id);
 }
 
 export async function updateLocataire(id, data) {
+  invaliderToutes();
   await updateDoc(doc(db, COLLECTIONS.locataires, id), { ...data, updatedAt: serverTimestamp() });
   return lireUn(COLLECTIONS.locataires, id);
 }
@@ -302,6 +350,7 @@ export async function updateLocataire(id, data) {
  * paiement orphelin pointant sur un bail disparu.
  */
 export async function deleteLocataire(id) {
+  invaliderToutes();
   const [baux, loyers, paiements, quittances] = await Promise.all([
     lireCollection(COLLECTIONS.baux),
     lireCollection(COLLECTIONS.loyers),
@@ -336,13 +385,42 @@ export async function deleteLocataire(id) {
 export const listBaux = () => lireCollection(COLLECTIONS.baux);
 export const getBail = (id) => lireUn(COLLECTIONS.baux, id);
 
+/**
+ * Un bail occupe un logement.
+ *
+ * La règle est vérifiée ici, dans la couche de données, et non dans chaque
+ * écran : une chambre ne peut porter qu'un bail en cours. La laisser aux
+ * formulaires laissait passer le cas principal — appeler `createBail`
+ * directement, ou passer par un écran qui aurait oublié la vérification —
+ * et deux locataires se retrouvaient sur la même chambre, chacun avec ses
+ * loyers, donc une facture à partager en silence.
+ *
+ * Un bail dont la date de sortie est renseignée libère le logement pour le
+ * suivant ; c'est la seule façon d'en hériter.
+ */
 export async function createBail(data) {
+  invaliderToutes();
+  const baux = await lireCollection(COLLECTIONS.baux);
+  const aujourdhui = new Date().toISOString().slice(0, 10);
+
+  const occupe = baux.some(
+    (b) =>
+      b.lotId === data.lotId &&
+      b.id !== data.id &&
+      (!b.dateDebut || b.dateDebut <= aujourdhui) &&
+      (!b.dateFin || b.dateFin >= aujourdhui)
+  );
+  if (occupe) {
+    throw new Error("Ce logement est déjà occupé par un bail en cours.");
+  }
+
   const id = data.id || nextId("bail");
   await setDoc(doc(db, COLLECTIONS.baux, id), { ...data, id });
   return lireUn(COLLECTIONS.baux, id);
 }
 
 export async function updateBail(id, data) {
+  invaliderToutes();
   await updateDoc(doc(db, COLLECTIONS.baux, id), { ...data, updatedAt: serverTimestamp() });
   return lireUn(COLLECTIONS.baux, id);
 }
@@ -353,6 +431,7 @@ export async function updateBail(id, data) {
  * sans le bail, et les laisser produirait des totaux incohérents.
  */
 export async function deleteBail(id) {
+  invaliderToutes();
   const [loyers, paiements, quittances] = await Promise.all([
     lireCollection(COLLECTIONS.loyers),
     lireCollection(COLLECTIONS.paiements),
@@ -378,17 +457,20 @@ export async function deleteBail(id) {
 export const listDepenses = () => lireCollection(COLLECTIONS.depenses);
 
 export async function createDepense(data) {
+  invaliderToutes();
   const id = data.id || nextId("dep");
   await setDoc(doc(db, COLLECTIONS.depenses, id), { ...data, id });
   return lireUn(COLLECTIONS.depenses, id);
 }
 
 export async function updateDepense(id, data) {
+  invaliderToutes();
   await updateDoc(doc(db, COLLECTIONS.depenses, id), { ...data, updatedAt: serverTimestamp() });
   return lireUn(COLLECTIONS.depenses, id);
 }
 
 export async function deleteDepense(id) {
+  invaliderToutes();
   await deleteDoc(doc(db, COLLECTIONS.depenses, id));
 }
 
@@ -399,20 +481,30 @@ export const listLoyers = () => lireCollection(COLLECTIONS.loyers);
 /** Un loyer est-il déjà soldé, partiellement réglé, ou impayé ? */
 export async function recomputeStatutLoyers(loyerIds) {
   if (!loyerIds.length) return;
-  const paiements = await lireCollection(COLLECTIONS.paiements);
-  await Promise.all(
-    loyerIds.map(async (loyerId) => {
-      const loyer = await lireUn(COLLECTIONS.loyers, loyerId);
-      if (!loyer) return;
-      const paye = paiements
-        .filter((p) => (p.allocations || []).some((a) => a.loyerId === loyerId))
-        .reduce((s, p) => s + p.allocations.find((a) => a.loyerId === loyerId).montant, 0);
-      const statut = statutPour(paye, loyer.montantDu);
-      if (statut !== loyer.statut) {
-        await updateDoc(doc(db, COLLECTIONS.loyers, loyerId), { statut });
-      }
-    })
-  );
+  // Une seule lecture des loyers concernés, et une écriture groupée. La
+  // version précédente relisait chaque loyer un par un puis les réécrivait un
+  // par un : deux requêtes par loyer touché, donc une seconde chacune.
+  const [paiements, loyers] = await Promise.all([
+    lireCollection(COLLECTIONS.paiements),
+    Promise.all(loyerIds.map((id) => lireUn(COLLECTIONS.loyers, id, { frais: true }))),
+  ]);
+
+  const aEcrire = [];
+  for (const loyer of loyers.filter(Boolean)) {
+    const paye = paiements
+      .filter((p) => (p.allocations || []).some((a) => a.loyerId === loyer.id))
+      .reduce((s, p) => s + p.allocations.find((a) => a.loyerId === loyer.id).montant, 0);
+    const statut = statutPour(paye, loyer.montantDu);
+    if (statut !== loyer.statut) aEcrire.push({ id: loyer.id, statut });
+  }
+
+  invalider(COLLECTIONS.loyers);
+  if (!aEcrire.length) return;
+  const lot = writeBatch(db);
+  for (const { id, statut } of aEcrire) {
+    lot.update(doc(db, COLLECTIONS.loyers, id), { statut });
+  }
+  await lot.commit();
 }
 
 /**
@@ -425,13 +517,15 @@ export async function genererLoyersPourPeriode(periode, bailIds = null, { jusquA
     : await lireCollection(COLLECTIONS.baux);
   const existants = await lireCollection(COLLECTIONS.loyers);
 
-  let crees = 0;
+  const aEcrire = [];
   for (const bail of baux.filter(Boolean)) {
-    const couvert = jusquA ? bailActifCouvre(bail, periode) : bailCouvre(bail, periode, Infinity);
+    const couvert = jusquA
+      ? bailActifCouvre(bail, periode)
+      : bailCouvre(bail, periode, Infinity);
     if (!couvert) continue;
     if (existants.some((l) => l.bailId === bail.id && l.periode === periode)) continue;
     const postes = fraisDefautBail(bail);
-    const loyer = {
+    aEcrire.push({
       id: nextId("loy"),
       bailId: bail.id,
       periode,
@@ -439,11 +533,31 @@ export async function genererLoyersPourPeriode(periode, bailIds = null, { jusquA
       loyer: bail.loyerMensuel,
       montantDu: bail.loyerMensuel + totalPostes(postes),
       statut: "impaye",
-    };
-    await setDoc(doc(db, COLLECTIONS.loyers, loyer.id), loyer);
-    crees += 1;
+    });
   }
-  return crees;
+
+  // Un aller-retour au lieu d'un par loyer : vingt-six chambres demandaient
+  // vingt-six requêtes là où une seule suffisait.
+  await ecrireEnLot(COLLECTIONS.loyers, aEcrire);
+  return aEcrire.length;
+}
+
+/**
+ * Écrit un ensemble de documents en une seule requête.
+ *
+ * Firestore limite un lot à 500 opérations ; au-delà, le lot est coupé en
+ * plusieurs, ce qui reste bien plus rapide qu'une écriture par document.
+ */
+async function ecrireEnLot(nom, documents) {
+  if (!documents.length) return;
+  invalider(nom);
+  for (let i = 0; i < documents.length; i += 400) {
+    const lot = writeBatch(db);
+    for (const d of documents.slice(i, i + 400)) {
+      lot.set(doc(db, nom, d.id), d);
+    }
+    await lot.commit();
+  }
 }
 
 /**
@@ -467,16 +581,37 @@ export async function genererLoyersDepuis(bailId, periodeDebut, periodeFin = nul
     ? periodeFin.slice(0, 7)
     : periodeFinBail(bail, periodeCourante());
 
+// Les loyers sont lus UNE fois pour toute la période. La version précédente
+  // relisait les collections à chaque mois : un bail de six mois coûtait une
+  // douzaine de requêtes, chacune d'environ une seconde.
+  const [existants] = await Promise.all([lireCollection(COLLECTIONS.loyers)]);
+  const dejaLa = new Set(
+    existants.filter((l) => l.bailId === bailId).map((l) => l.periode)
+  );
+
+  const postes = fraisDefautBail(bail);
+  const aEcrire = [];
   let cur = debut;
-  let crees = 0;
-  // Garde-fou : dix ans de bail. Au-delà la boucle ne s'arrêterait pas d'elle-même
-  // et le navigateur gèlerait ; mieux vaut s'arrêter que bloquer l'écran.
+  // Garde-fou : dix ans de bail. Au-delà la boucle ne s'arrêterait pas
+  // d'elle-même et le navigateur gèlerait.
   for (let garde = 0; garde < 120; garde += 1) {
     if (comparePeriode(cur, borne) > 0) break;
-    crees += await genererLoyersPourPeriode(cur, [bailId], { jusquA: false });
+    if (!dejaLa.has(cur) && bailCouvre(bail, cur, Infinity)) {
+      aEcrire.push({
+        id: nextId("loy"),
+        bailId,
+        periode: cur,
+        ...postes,
+        loyer: bail.loyerMensuel,
+        montantDu: bail.loyerMensuel + totalPostes(postes),
+        statut: "impaye",
+      });
+    }
     cur = periodeDecalee(cur, 1);
   }
-  return crees;
+
+  await ecrireEnLot(COLLECTIONS.loyers, aEcrire);
+  return aEcrire.length;
 }
 
 // --- Encaissement ---
@@ -597,12 +732,26 @@ export async function enregistrerPaiement(data) {
   return { paiement, quittance: null };
 }
 
+/**
+ * Le loyer d'un bail pour une période.
+ *
+ * Interrogeait la collection entière pour en extraire un document : quelques
+ * dizaines de loyers pour un seul résultat, et autant de secondes par appel —
+ * c'était le principal poste de lenteur à l'encaissement, appelé pour chaque
+ * mois d'avance. Firestore sait faire le tri ; deux filtres d'égalité ne
+ * demandent aucun index composite.
+ */
 async function lireLoyerDeBail(bailId, periode) {
-  const snap = await getDocs(collection(db, COLLECTIONS.loyers));
-  const found = snap.docs
-    .map((d) => ({ id: d.id, ...d.data() }))
-    .find((l) => l.bailId === bailId && l.periode === periode);
-  return found || null;
+  const snap = await getDocs(
+    query(
+      collection(db, COLLECTIONS.loyers),
+      where("bailId", "==", bailId),
+      where("periode", "==", periode),
+      limit(1)
+    )
+  );
+  if (snap.empty) return null;
+  return { id: snap.docs[0].id, ...snap.docs[0].data() };
 }
 
 // --- Quittances ---
@@ -615,6 +764,7 @@ export async function getPaiement(id) {
 }
 
 export async function deletePaiement(id) {
+  invaliderToutes();
   await deleteDoc(doc(db, COLLECTIONS.paiements, id));
 }
 
