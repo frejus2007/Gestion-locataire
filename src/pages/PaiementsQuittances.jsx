@@ -21,7 +21,7 @@ import { useApp } from "../context/AppContext";
 import { useToast } from "../context/ToastContext";
 import { Card, EmptyState, ConfirmDialog, Modal } from "../components/ui";
 import { LIGNES_FRAIS, POSTES_FRAIS } from "../data/db.firebase";
-import { formatMoney, formatDate } from "../utils/format";
+import { formatMoney, formatDate, periodeToLabel } from "../utils/format";
 import { construireQuittance, telecharger, ouvrir, preparerLogo, preparerSignature } from "../utils/quittancePdf";
 import Encaissement from "./paiements/Encaissement";
 
@@ -54,9 +54,10 @@ export default function PaiementsQuittances() {
     paiements,
     quittances,
     baux,
-    lotsParId,
-    immeublesParId,
-    locatairesParId,
+    lots,
+    immeubles,
+    locataires,
+    loyers,
     removePaiement,
     genererQuittancesManquantes,
     proprietaire,
@@ -70,24 +71,31 @@ export default function PaiementsQuittances() {
   const [aVoir, setAVoir] = useState(null);
   const [emission, setEmission] = useState(false);
 
+  // Index par identifiant : la liste des quittances et la résolution bail → lot
+  // → immeuble seraient sinon refaites à chaque rendu.
+  const lotsIndex = useMemo(() => new Map(lots.map((l) => [l.id, l])), [lots]);
+  const immeublesIndex = useMemo(() => new Map(immeubles.map((i) => [i.id, i])), [immeubles]);
+  const locatairesIndex = useMemo(() => new Map(locataires.map((l) => [l.id, l])), [locataires]);
+  const loyersIndex = useMemo(() => new Map(loyers.map((l) => [l.id, l])), [loyers]);
+
   const lignes = useMemo(
     () =>
       quittances
         .map((quittance) => {
           const bail = baux.find((b) => b.id === quittance.bailId) || null;
-          const lot = bail ? lotsParId.get(bail.lotId) || null : null;
+          const lot = bail ? lotsIndex.get(bail.lotId) || null : null;
           return {
             quittance,
             paiement: paiements.find((p) => p.id === quittance.paiementId) || null,
-            locataire: locatairesParId.get(quittance.locataireId) || null,
-            immeuble: lot ? immeublesParId.get(lot.immeubleId) || null : null,
+            locataire: locatairesIndex.get(quittance.locataireId) || null,
+            immeuble: lot ? immeublesIndex.get(lot.immeubleId) || null : null,
             bail,
           };
         })
         .sort((a, b) =>
           (b.quittance.emission || "").localeCompare(a.quittance.emission || "")
         ),
-    [quittances, paiements, baux, lotsParId, immeublesParId, locatairesParId]
+    [quittances, paiements, baux, lotsIndex, immeublesIndex, locatairesIndex]
   );
 
   const filtrees = lignes.filter(({ quittance, paiement, locataire }) => {
@@ -118,10 +126,49 @@ export default function PaiementsQuittances() {
       // mémorisée : attendre une ressource déjà prête ne coûte rien.
       await Promise.all([preparerLogo(), preparerSignature()]);
       const bail = baux.find((b) => b.id === quittance.bailId);
+      const lot = bail ? lotsIndex.get(bail.lotId) : null;
+      const immeuble = lot ? immeublesIndex.get(lot.immeubleId) : null;
+      const locataire = bail ? locatairesIndex.get(bail.locataireId) : null;
+
+      // Les mois réellement couverts, chacun avec son détail : c'est ce qui
+      // distingue « payer août » d'un paiement qui, par défaut, affichait le
+      // mois courant.
+      const allocations = (quittance.allocations || [])
+        .map((a) => ({ ...a, loyer: loyersIndex.get(a.loyerId) }))
+        .filter((a) => a.loyer?.periode);
+
+      const periodes = allocations.map((a) => a.loyer.periode);
+
+      // Un bloc de détail par mois. Chaque affectation porte le détail
+      // figé par le paiement quand elle en a un — c'est le cas du mois réglé
+      // aujourd'hui — et sinon les montants du document de loyer. Les
+      // paiements anciens rangeaient leur détail sur la première affectation ;
+      // cette lecture les couvre aussi.
+      const blocs = allocations.map((a, i) => ({
+        titre:
+          periodes.length > 1
+            ? `DETAIL — ${periodeToLabel(a.loyer.periode).toUpperCase()}`
+            : "DETAIL DU PAIEMENT",
+        detail: a.detail || (i === 0 && quittance.detail) || a.loyer || {},
+        montant: a.montant,
+      }));
+
       const doc = construireQuittance(quittance, {
         proprietaire,
-        periode: quittance.periode,
+        periodes,
+        blocs,
         cautionSur: bail?.cautionSur || "",
+        // Mentions absentes des quittances émises avant leur mise en place :
+        // on les lit ici plutôt que de réécrire les documents déjà délivrés.
+        vivant: {
+          nomLocataire: [locataire?.prenoms, locataire?.nom].filter(Boolean).join(" "),
+          ifuLocataire: locataire?.ifu || "",
+          telephoneLocataire: locataire?.telephone || "",
+          designationLot: lot?.designation || "",
+          adresseImmeuble: immeuble
+            ? [immeuble.adresse, immeuble.ville].filter(Boolean).join(", ")
+            : "",
+        },
       });
       if (action === "ouvrir") ouvrir(doc);
       else telecharger(doc, `${quittance.numero || "quittance"}.pdf`);
@@ -133,10 +180,19 @@ export default function PaiementsQuittances() {
   const supprimer = async () => {
     const res = await removePaiement(aSupprimer);
     if (res?.ok !== false) {
-      addToast("Paiement supprimé — les loyers concernés redeviennent impayés", "success");
+      // Le paiement et sa quittance partent ensemble, et les loyers reviennent
+      // à l'état que leur restent dû. Dire ce qui s'est réellement passé vaut
+      // mieux qu'un message générique.
+      const n = res.resultat?.quittances?.length || 0;
+      addToast(
+        "Paiement supprimé" +
+          (n > 0 ? ` et ${n} quittance associée` : "") +
+          " — les loyers concernés redeviennent dus",
+        "success"
+      );
       setASupprimer(null);
     } else {
-      addToast(res?.error || "Suppression impossible", "error");
+      addToast(res?.erreur || "Suppression impossible", "error");
     }
   };
 
@@ -184,9 +240,6 @@ export default function PaiementsQuittances() {
 
       {encaissement ? (
         <Encaissement
-          baux={baux}
-          lotsParId={lotsParId}
-          immeublesParId={immeublesParId}
           onClose={() => setEncaissement(false)}
           onEncaisser={() => setEncaissement(false)}
         />

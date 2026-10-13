@@ -185,14 +185,46 @@ function bailCouvre(bail, periode, max = periodeCourante()) {
 const bailActifCouvre = (bail, periode, max = periodeCourante()) =>
   comparePeriode(periode, max) <= 0 && bailCouvre(bail, periode, max);
 
+/**
+ * Applique à un loyer le détail d'un encaissement.
+ *
+ * Deux règles protègent l'historique :
+ *
+ *   1. Le **loyer** est celui du contrat. Il n'est jamais repris du paiement :
+ *      l'écran d'encaissement propose le loyer restant dû, qui n'est pas le
+ *      loyer du mois, et l'écrire ici ferait descendre le loyer enregistré
+ *      chaque fois qu'un reste est encaissé.
+ *   2. Les **charges** ne font qu'augmenter. Un montant saisi zéro ne veut pas
+ *      dire « aucune charge », cela veut dire « rien à ajouter ce jour-ci » :
+ *      remettre l'eau à zéro effacerait une facture déjà établie.
+ *
+ * Le montant dû ne peut donc jamais passer sous ce qui est déjà encaissé, et
+ * `enregistrerPaiement` refuse une affectation plus grande que le reste.
+ *
+ * @returns {object} les champs à écrire sur le document loyer
+ */
 function appliquerDetailLoyer(loyer, detail) {
   const montants = Object.fromEntries(
     POSTES_FRAIS.map((cle) => [cle, Math.max(0, Math.round(Number(detail[cle]) || 0))])
   );
-  loyer.loyer = montants.loyer;
-  for (const cle of POSTES_FRAIS) if (cle !== "loyer") loyer[cle] = montants[cle];
-  loyer.montantDu = totalPostes(loyer);
-  return loyer;
+
+  const champs = {};
+  const copie = { ...loyer };
+  for (const cle of POSTES_FRAIS) {
+    if (cle === "loyer") continue;
+    if (montants[cle] <= 0) continue;
+    if ((Number(loyer[cle]) || 0) >= montants[cle]) continue;
+    champs[cle] = montants[cle];
+    copie[cle] = montants[cle];
+  }
+  if (Object.keys(champs).length === 0) return {};
+
+  // Le loyer reste celui du bail : un document qui n'en porterait pas est
+  //complété par le seul montant connu, jamais par celui du paiement.
+  copie.loyer = Number(loyer.loyer) || 0;
+  champs.loyer = copie.loyer;
+  champs.montantDu = totalPostes(copie);
+  return champs;
 }
 
 /** Total déjà imputé sur un loyer, tous paiements confondus. */
@@ -648,11 +680,34 @@ export async function enregistrerPaiement(data) {
     : null;
   if (detail && detail.loyer <= 0) throw new Error("Le loyer doit être supérieur à zéro");
 
+  // Une charge appartient à un mois : le détail de chaque affectation est donc
+  // le sien. `data.details` en porte autant qu'il y a de mois ; à défaut, le
+  // détail unique s'applique au dernier — c'est le cas d'un encaissement sur
+  // un seul mois, et celui des anciens appels.
+  //
+  // Construit au niveau de la fonction : les affectations le réutilisent plus
+  // bas, pour la quittance.
+  const detailParMois =
+    Array.isArray(data.details) && data.details.length === allocations.length
+      ? data.details
+      : allocations.map((_, i) => (i === allocations.length - 1 ? detail : null));
+
   let montant = Math.round(Number(data.montant) || 0);
   if (detail) {
-    for (const alloc of allocations) {
+    for (const [i, alloc] of allocations.entries()) {
+      const detailDuMois = detailParMois[i];
+      if (!detailDuMois) continue;
       const loyer = await lireUn(COLLECTIONS.loyers, alloc.loyerId);
-      if (loyer) await updateDoc(doc(db, COLLECTIONS.loyers, loyer.id), appliquerDetailLoyer(loyer, detail));
+      if (!loyer) continue;
+      // Le loyer d'un mois ne se réécrit jamais à partir d'un paiement : c'est
+      // le contrat qui le fixe. Seules les charges sont mises à jour, et
+      // seulement vers le haut — une charge ne se retire pas parce qu'on a
+      // encaissé, sinon l'historique se réécrirait à chaque versement.
+      const champs = appliquerDetailLoyer(loyer, detailDuMois);
+      // Rien à écrire quand le paiement n'apporte aucune charge nouvelle.
+      if (Object.keys(champs).length > 0) {
+        await updateDoc(doc(db, COLLECTIONS.loyers, loyer.id), champs);
+      }
     }
     montant = allocations.reduce((s, a) => s + a.montant, 0);
   }
@@ -722,7 +777,9 @@ export async function enregistrerPaiement(data) {
     allocations: allocations.map((a, i) => ({
       loyerId: a.loyerId,
       montant: Math.round(a.montant),
-      detail: i === 0 && detail ? dupliquer(detail) : null,
+      // Chaque mois emporte ses propres charges : la quittance les relit bloc
+      // par bloc. L'eau de juin reste celle de juin.
+      detail: detailParMois[i] ? dupliquer(detailParMois[i]) : null,
     })),
     createdAt: serverTimestamp(),
   };
@@ -763,9 +820,39 @@ export async function getPaiement(id) {
   return lireUn(COLLECTIONS.paiements, id);
 }
 
+/**
+ * Supprime un paiement et la quittance qui l'atteste.
+ *
+ * Les deux vont ensemble : une quittance sans son paiement n'a plus de quoi
+ * être justifiée, et la laisser affichait un reçu pour un versement annulé.
+ * Les loyers concernés sont ensuite recalculés — ils redeviennent impayés, ou
+ * partiellement réglés s'ils le sont encore.
+ *
+ * @returns {Promise<{paiement: string|null, quittances: string[]}>}
+ */
 export async function deletePaiement(id) {
   invaliderToutes();
-  await deleteDoc(doc(db, COLLECTIONS.paiements, id));
+  const [paiements, quittances] = await Promise.all([
+    lireCollection(COLLECTIONS.paiements),
+    lireCollection(COLLECTIONS.quittances),
+  ]);
+
+  const paiement = paiements.find((p) => p.id === id) || null;
+  // Uniquement la quittance de CE paiement : les autres versements du même
+  // locataire ont leurs propres quittances, qui doivent rester.
+  const liees = quittances.filter((q) => q.paiementId === id);
+
+  await Promise.all([
+    ...liees.map((q) => deleteDoc(doc(db, COLLECTIONS.quittances, q.id))),
+    deleteDoc(doc(db, COLLECTIONS.paiements, id)),
+  ]);
+
+  // Le statut d'un loyer dépend des paiements qui le couvrent : en retirer un
+  // change sa situation, il faut donc le recalculer.
+  const loyersConcernes = new Set((paiement?.allocations || []).map((a) => a.loyerId));
+  await recomputeStatutLoyers([...loyersConcernes]);
+
+  return { paiement: id, quittances: liees.map((q) => q.id) };
 }
 
 /**
@@ -795,7 +882,16 @@ export async function genererQuittance(paiementId) {
   const paiement = await lireUn(COLLECTIONS.paiements, paiementId);
   if (!paiement) throw new Error("Paiement introuvable");
 
+  // Un paiement a droit à une quittance, une seule. Ouvrir ou télécharger le PDF
+  // d'une quittance déjà émise la renvoie telle quelle : sans cette garde, chaque
+  // consultation créait un document et consommait un numéro de quittance.
+  const quittances = await lireCollection(COLLECTIONS.quittances);
+  const existante = quittances.find((q) => q.paiementId === paiementId);
+  if (existante) return existante;
+
   const bail = await lireUn(COLLECTIONS.baux, paiement.bailId);
+  const lot = bail ? await lireUn(COLLECTIONS.lots, bail.lotId) : null;
+  const immeuble = lot ? await lireUn(COLLECTIONS.immeubles, lot.immeubleId) : null;
   const locataire = bail
     ? await lireUn(COLLECTIONS.locataires, bail.locataireId)
     : null;
@@ -820,14 +916,22 @@ export async function genererQuittance(paiementId) {
     libelles: paiement.libelles || null,
     allocations: paiement.allocations || [],
     cautionSur: bail?.cautionSur || "",
-    // Locataire et propriétaire figés à l'émission.
-    nomLocataire: locataire?.nom || "",
+    // Locataire, logement et propriétaire figés à l'émission. La quittance doit
+    // rester lisible des années plus tard : ces mentions ne sont plus relues
+    // ailleurs, donc il faut les figer ici.
+    nomLocataire: [locataire?.prenoms, locataire?.nom].filter(Boolean).join(" "),
     prenomsLocataire: locataire?.prenoms || "",
     ifuLocataire: locataire?.ifu || "",
     telephoneLocataire: locataire?.telephone || "",
+    designationLot: lot?.designation || "",
+    adresseImmeuble: immeuble
+      ? [immeuble.adresse, immeuble.ville].filter(Boolean).join(", ")
+      : "",
     nomProprietaire: proprietaire?.nom || "",
     prenomsProprietaire: proprietaire?.prenoms || "",
     ifuProprietaire: proprietaire?.ifu || "",
+    telephoneProprietaire: proprietaire?.telephone || "",
+    adresseProprietaire: proprietaire?.adresse || "",
     villeProprietaire: proprietaire?.ville || "Cotonou",
     createdAt: serverTimestamp(),
   };

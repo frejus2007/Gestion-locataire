@@ -252,6 +252,17 @@ table.cag-table tfoot td {
   border-style: dashed;
   cursor: default;
 }
+/* Les deux bornes d'une période : le mois à gauche, son année à droite. */
+.cag-periode {
+  display: flex;
+  gap: 0.4rem;
+}
+.cag-periode .select:first-child {
+  flex: 1 1 auto;
+}
+.cag-periode .select:last-child {
+  flex: 0 0 5.2rem;
+}
 .cag-reste {
   margin: 0 0 0.9rem;
   font-size: 0.82rem;

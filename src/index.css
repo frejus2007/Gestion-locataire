@@ -1277,6 +1277,67 @@ textarea.input {
   flex: 0 0 auto;
 }
 
+/* ---------- Filet d'erreur ---------- */
+
+/* Remplace la page blanche par un message : l'erreur est dite, et les deux
+   sorties — recharger ou revenir à l'accueil — sont à portée de main. */
+.filet-erreur {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1.25rem;
+  background: var(--bg);
+}
+.filet-erreur-carte {
+  max-width: 640px;
+  width: 100%;
+  text-align: center;
+  color: var(--text);
+}
+.filet-erreur-carte > svg { color: var(--danger); }
+.filet-erreur-carte h1 {
+  font-size: 1.3rem;
+  font-weight: 700;
+  margin: 0.9rem 0 0.4rem;
+}
+.filet-erreur-carte p {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  margin: 0 0 1.1rem;
+}
+.filet-erreur-detail {
+  text-align: left;
+  padding: 0.75rem 0.9rem;
+  border-radius: var(--radius-xs);
+  background: var(--danger-light);
+  border: 1px solid var(--danger-border);
+  color: var(--danger-dark);
+  font-size: 0.82rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.filet-erreur-pile {
+  text-align: left;
+  max-height: 190px;
+  overflow: auto;
+  padding: 0.75rem 0.9rem;
+  border-radius: var(--radius-xs);
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.filet-erreur-actions {
+  display: flex;
+  justify-content: center;
+  gap: 0.65rem;
+  margin-top: 1.2rem;
+  flex-wrap: wrap;
+}
+
 /* ---------- États & Alertes ---------- */
 
 .empty-state {

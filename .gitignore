@@ -33,6 +33,8 @@ dist-ssr
 
 # Apercus produits par les scripts de verification
 apercu-quittance.pdf
+test-quittance-simple.pdf
+test-quittance-trimestriel.pdf
 
 # Sauvegardes Firestore : données de production, jamais versionnées
 sauvegardes/

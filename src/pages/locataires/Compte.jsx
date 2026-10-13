@@ -26,6 +26,11 @@ import { lignesPostesPour } from "../../data/db.firebase";
 import { formatMoney, formatDate, periodeToLabel, periodeToCourt } from "../../utils/format";
 import Encaissement from "../paiements/Encaissement";
 
+/** Un loyer est-il soldé : plus rien à encaisser sur ce mois ? */
+function estSolde(loyer, paye) {
+  return (Number(loyer.montantDu) || 0) > 0 && paye >= loyer.montantDu;
+}
+
 function montantPoste(loyer, poste) {
   if (loyer[poste] !== undefined) return Number(loyer[poste]) || 0;
   return poste === "loyer" ? Number(loyer.montantDu) || 0 : 0;
@@ -42,7 +47,11 @@ export default function Compte() {
     loyersDe,
     paiementsDe,
   } = useApp();
-  const [encaissement, setEncaissement] = useState(false);
+  // Le mois que le propriétaire a choisi de régler : la modale d'encaissement
+  // s'ouvre directement dessus. Sans cela, on ne pouvait régler que « le
+  // premier mois dû », et cliquer sur août dans le relevé finissait par
+  // facturer octobre.
+const [moisARegler, setMoisARegler] = useState(null);
 
   // La route « /locataires/:id » est appelée avec deux sortes d'identifiants :
   // le bail depuis la liste des locataires (le compte est la carte du bail) et
@@ -86,6 +95,12 @@ export default function Compte() {
     return out;
   }, [postes, lignes]);
 
+  // Le bouton « Encaisser » se positionne sur le premier mois non soldé.
+  const premierMoisDu = useMemo(() => {
+    const impaye = lignes.find(({ loyer, paye }) => !estSolde(loyer, paye));
+    return impaye?.loyer.periode || lignes.at(-1)?.loyer.periode || null;
+  }, [lignes]);
+
   const totalDu = lignes.reduce((s, l) => s + (l.loyer.montantDu || 0), 0);
   const totalPaye = lignes.reduce((s, l) => s + l.paye, 0);
   const soldeFinal = totalDu - totalPaye;
@@ -117,7 +132,7 @@ export default function Compte() {
           <button
             type="button"
             className="btn btn-success"
-            onClick={() => setEncaissement(true)}
+            onClick={() => setMoisARegler(premierMoisDu)}
           >
             <Wallet size={16} /> Encaisser
           </button>
@@ -130,12 +145,12 @@ export default function Compte() {
         </div>
       </header>
 
-      {encaissement ? (
+      {moisARegler ? (
         <Encaissement
           bail={bail}
-          locataire={locataire}
-          onClose={() => setEncaissement(false)}
-          onEncaisser={() => setEncaissement(false)}
+          periodeInitiale={moisARegler}
+          onClose={() => setMoisARegler(null)}
+          onEncaisser={() => setMoisARegler(null)}
         />
       ) : null}
 
@@ -193,7 +208,7 @@ export default function Compte() {
             <FileText size={17} /> Relevé mensuel
           </h2>
           <span className="text-muted" style={{ fontSize: "0.8rem" }}>
-            Le solde cumulé montre ce qui reste à payer depuis le début du bail
+            Cliquez sur un mois impayé pour l'encaisser directement
           </span>
         </div>
 
@@ -218,7 +233,16 @@ export default function Compte() {
               </thead>
               <tbody>
                 {lignes.map(({ loyer, paye, solde }) => (
-                  <tr key={loyer.id}>
+                  <tr
+                    key={loyer.id}
+                    className={estSolde(loyer, paye) ? "" : "cag-ligne-cliquable"}
+                    onClick={() => !estSolde(loyer, paye) && setMoisARegler(loyer.periode)}
+                    title={
+                      estSolde(loyer, paye)
+                        ? undefined
+                        : `Encaisser ${periodeToLabel(loyer.periode)}`
+                    }
+                  >
                     <td className="cag-muted">{loyer.dateDebut ? formatDate(loyer.dateDebut) : "—"}</td>
                     <td title={periodeToLabel(loyer.periode)}>{periodeToCourt(loyer.periode)}</td>
                     {postes.map((p) => (

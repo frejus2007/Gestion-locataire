@@ -1,4 +1,4 @@
-// Génération de la quittance de loyer en PDF, au format officiel CAGOUNOU.
+﻿// Génération de la quittance de loyer en PDF, au format officiel CAGOUNOU.
 //
 // Le tout est fait dans le navigateur : aucune donnée ne sort de l'appareil.
 // jsPDF écrit un vrai fichier .pdf, que l'on peut télécharger ou ouvrir dans
@@ -16,9 +16,22 @@
 //   ▸ Export du relevé Excel  src/utils/exportExcel.js
 
 import { jsPDF } from "jspdf";
-import { LIGNES_FRAIS } from "../data/db.firebase.js";
-import { amountToWords, formatMoneyPlain, cautionSurLibelle } from "./format.js";
+import { amountToWords, formatMoneyPlain, cautionSurLibelle, periodeToLabel } from "./format.js";
 import { tracerCodeBarre } from "./codeBarre.js";
+
+// Les sept lignes de la quittance sont une donnée de présentation, pas de
+// gestion : les dupliquer ici évite au générateur de PDF de tirer la couche
+// Firestore, donc de l'ouvrir même pour simplement imprimer un reçu. La
+// couche de données continue d'être la seule à définir les postes.
+const LIGNES_FRAIS = [
+  { key: "loyer", label: "Loyer", defaut: true },
+  { key: "eau", label: "Eau" },
+  { key: "electricite", label: "Électricité" },
+  { key: "ordures", label: "Ordures ménagères" },
+  { key: "degats", label: "Dégâts" },
+  { key: "autre1", label: "Autre 1", libre: "libelle1" },
+  { key: "autre2", label: "Autre 2", libre: "libelle2" },
+];
 
 const POSTES_FRAIS = LIGNES_FRAIS.map((l) => l.key);
 
@@ -198,9 +211,28 @@ export function detailQuittance(q) {
   return repli;
 }
 
+/**
+ * Le texte de la ligne « MOIS DE ».
+ *
+ * Un paiement portant un seul mois indique ce mois. Un paiement de plusieurs
+ * mois — le trimestriel — indique la plage : c'est ce que le locataire a
+ * réellement réglé, et c'est ce qu'un « mois de octobre » tronqué ferait
+ * manquer.
+ *
+ * @param {object} q          quittance
+ * @param {string[]} [periodes]  mois couverts, au format « 2026-10 »
+ * @returns {string}          « octobre 2026 » ou « octobre 2026 à décembre 2026 »
+ */
+export function libellePeriodeFacturee(q, periodes) {
+  const liste = [...new Set((periodes || []).filter(Boolean))].sort();
+  if (liste.length === 0) return String(q.periode || "");
+  if (liste.length === 1) return periodeToLabel(liste[0]);
+  return `${periodeToLabel(liste[0])} à ${periodeToLabel(liste.at(-1))}`;
+}
+
 export function construireQuittance(q, options = {}) {
   const proprietaire = options.proprietaire || {};
-  const { periode = "", cautionSur = "" } = options;
+  const { cautionSur = "" } = options;
   // `compress` évite qu'une image de 500 ko fasse gonfler le fichier : sans
   // lui, jsPDF recopie le logo pixel par pixel et la quittance dépasse 1 Mo.
   const doc = new jsPDF({ unit: "pt", format: "a4", orientation: "portrait", compress: true });
@@ -209,6 +241,10 @@ export function construireQuittance(q, options = {}) {
   const detail = detailQuittance(q);
   const libelles = q.libelles || null;
   const nomComplet = [q.prenomsProprietaire, q.nomProprietaire].filter(Boolean).join(" ").trim();
+  // La période est déduite des mois réellement couverts par le paiement. Les
+  // paiements anciens ne stockent pas de période : le texte vient alors de
+  // l'appelant, qui a les loyers sous la main.
+  const libellePeriode = libellePeriodeFacturee(q, options.periodes);
 
   /* ============ EN-TÊTE ============ */
   // Le logo ouvre la quittance en haut à gauche ; le bloc propriétaire
@@ -220,7 +256,12 @@ export function construireQuittance(q, options = {}) {
     try {
       const d = dimensionsPng(logo, doc);
       if (d && d.largeur > 0) {
-        const largeurLogo = 118;
+        // Un paiement trimestriel doit tenir sur une seule feuille. Le logo occupe en
+  // haut une place qui compte : on le ramène à 96 points de large, ce qui
+  // reste parfaitement lisible à l'impression et libère la hauteur qui
+  // manquait. C'est le levier le plus simple : toucher au texte, ce serait
+  // dégrader le reçu.
+  const largeurLogo = 96;
         const hauteurLogo = (largeurLogo * d.hauteur) / d.largeur;
         doc.addImage(logo, "PNG", L, y0, largeurLogo, hauteurLogo);
         y0 += hauteurLogo + 16;
@@ -271,7 +312,7 @@ export function construireQuittance(q, options = {}) {
   // (Q-2026-000042), ce que le libellé rend explicite au premier coup d'œil.
   doc.text(`N° de séquence : ${numeroQuittance}`, COL, 58, { maxWidth: R - COL });
   doc.text(`DATE : ${frDate(q.datePaiement)}`, COL, 71, { maxWidth: R - COL });
-  doc.text(`MOIS DE : ${periode || "—"}`, COL, 84, { maxWidth: R - COL });
+  doc.text(`MOIS DE : ${libellePeriode || "—"}`, COL, 84, { maxWidth: R - COL });
   // La caution vient désormais d'une liste de cases cochées ; elle est rendue
   // en texte lisible. Les baux saisis avant ce changement portent une chaîne,
   // que `cautionSurLibelle` sait aussi traduire.
@@ -294,12 +335,28 @@ export function construireQuittance(q, options = {}) {
   y2 += 18;
 
   const labelW = 150;
+  // Les mentions figées à l'émission priment ; quand elles manquent — sur les
+  // quittances émises avant leur mise en place — on lit la donnée vivante.
+  // C'est ce qui évite de réécrire l'historique : une vieille quittance se
+  // complete à l'affichage au lieu d'être corrigée dans la base.
+  const vivant = options.vivant || {};
+  const texte = (fige, deSecours) =>
+    String(fige || "").trim() || String(deSecours || "").trim();
+
+  const nomAffiche = texte(q.nomLocataire, vivant.nomLocataire);
+  // Les quittances anciennes ne stockaient que le nom : on le complète par les
+  // prénoms lorsqu'ils sont connus par ailleurs.
+  const avecPrenoms =
+    q.prenomsLocataire && !nomAffiche.toLowerCase().includes(String(q.prenomsLocataire).toLowerCase())
+      ? `${String(q.prenomsLocataire).trim()} ${nomAffiche}`.trim()
+      : nomAffiche;
+
   const lignesLocataire = [
-    ["NUMERO APPART.", q.designationLot],
-    ["NOM & PRENOMS", q.nomLocataire],
-    ["IFU", q.ifuLocataire],
-    ["TEL", q.telephoneLocataire],
-    ["ADRESSE LOCATIVE", q.adresseImmeuble],
+    ["NUMERO APPART.", texte(q.designationLot, vivant.designationLot)],
+    ["NOM & PRENOMS", texte(avecPrenoms, vivant.nomLocataire)],
+    ["IFU", texte(q.ifuLocataire, vivant.ifuLocataire)],
+    ["TEL", texte(q.telephoneLocataire, vivant.telephoneLocataire)],
+    ["ADRESSE LOCATIVE", texte(q.adresseImmeuble, vivant.adresseImmeuble)],
   ];
   doc.setFont("helvetica", "normal").setFontSize(10);
   lignesLocataire.forEach(([label, valeur]) => {
@@ -314,30 +371,124 @@ export function construireQuittance(q, options = {}) {
   y2 += rowH + 18;
 
   /* ============ DÉTAIL DES SEPT LIGNES ============ */
-  const detailW = W * 0.62;
-  doc.setFont("helvetica", "bold").setFontSize(10).setTextColor(NOIR);
-  doc.text("DETAIL DU PAIEMENT", L, y2, { maxWidth: detailW });
-  y2 += 6;
-  doc.setDrawColor("#999999").setLineWidth(0.7);
-  doc.line(L, y2, L + detailW, y2);
+  // Un paiement de plusieurs mois porte un bloc par mois : le propriétaire
+  // règle un trimestre d'un geste, mais le locataire doit pouvoir vérifier
+  // ce que chaque mois a couvert. Un détail unique, additionné, ne le
+  // permettrait pas — c'était la source des incohérences signalées.
+  //
+  // `blocs` est établi ici, avant tout usage : une `const` lue avant sa
+  // déclaration lève une erreur qui vide toute la quittance.
+  const blocs = Array.isArray(options.blocs) && options.blocs.length > 0
+    ? options.blocs
+    : [{ titre: "DETAIL DU PAIEMENT", detail, montant }];
 
-  LIGNES_FRAIS.forEach((ligne) => {
-    y2 += 13;
-    const valeur = Number(detail[ligne.key]) || 0;
-    const texte = valeur > 0 ? formatMoneyPlain(valeur) : "—";
-    doc.setFont("helvetica", "normal").setFontSize(10).setTextColor(valeur > 0 ? NOIR : GRIS);
-    doc.text(libelleLigne(ligne, libelles), L + 5, y2, { maxWidth: detailW - 110 });
-    // Aligné à droite par sa position : `align` n'est pas fiable avec maxWidth.
-    doc.text(texte, L + detailW - 8 - doc.getTextWidth(texte), y2);
-  });
-  y2 += 5;
-  doc.setDrawColor(NOIR).setLineWidth(1);
-  doc.line(L, y2, L + detailW, y2);
+  const detailW = W * 0.62;
+  // Un paiement couvrant plusieurs mois doit tenir sur une seule feuille. Le
+  // logo de tête, les blocs de détail et la signature en bas se disputent la
+  // place : au-delà d'un mois, les sept lignes se resserrent pour que le reçu
+  // reste imprimable en un seul exemplaire.
+  const serré = blocs.length > 1;
+  // Marge de sécurité : cinq points de battement suffisaient à faire basculer le
+  // trimestriel sur une deuxième page. On tient donc largement en dessous.
+  const interligne = serré ? 9.5 : 12;
+  const tailleLigne = serré ? 9 : 10;
+
+  /** Écrit les sept lignes d'un bloc et rend le curseur juste en dessous. */
+  const ecrireBloc = (titre, detailBloc, montantBloc) => {
+    doc.setFont("helvetica", "bold").setFontSize(tailleLigne + 1).setTextColor(NOIR);
+    doc.text(titre, L, y2, { maxWidth: detailW });
+    if (montantBloc !== undefined) {
+      const somme = formatMoneyPlain(montantBloc);
+      doc.text(somme, L + detailW - doc.getTextWidth(somme), y2);
+    }
+    y2 += serré ? 5 : 6;
+    doc.setDrawColor("#999999").setLineWidth(0.7);
+    doc.line(L, y2, L + detailW, y2);
+
+    LIGNES_FRAIS.forEach((ligne) => {
+      y2 += interligne;
+      const valeur = Number(detailBloc[ligne.key]) || 0;
+      const montant = valeur > 0 ? formatMoneyPlain(valeur) : "—";
+      doc.setFont("helvetica", "normal").setFontSize(tailleLigne).setTextColor(valeur > 0 ? NOIR : GRIS);
+      doc.text(libelleLigne(ligne, libelles), L + 5, y2, { maxWidth: detailW - 110 });
+      // Aligné à droite par sa position : `align` n'est pas fiable avec maxWidth.
+      doc.text(montant, L + detailW - 8 - doc.getTextWidth(montant), y2);
+    });
+    y2 += serré ? 4 : 5;
+    doc.setDrawColor(NOIR).setLineWidth(1);
+    doc.line(L, y2, L + detailW, y2);
+    return montantBloc;
+  };
+
+  // L'appelant fournit le détail de chaque mois quand le paiement en porte
+  // plusieurs ; à défaut, un seul bloc reprend le détail global. `blocs` est
+  // établi plus haut, avant la mise en page.
+  if (blocs.length <= 3) {
+    blocs.forEach((bloc, i) => {
+      if (i > 0) y2 += 9;
+      ecrireBloc(bloc.titre, bloc.detail, bloc.montant);
+    });
+  } else {
+    doc.setFont("helvetica", "bold").setFontSize(10).setTextColor(NOIR);
+    doc.text("DETAIL DU PAIEMENT PAR MOIS", L, y2);
+    y2 += 8;
+
+    const colonneMois = 108;
+    const largeurUtile = W - colonneMois - 66;
+    const largeurPoste = largeurUtile / POSTES_FRAIS.length;
+
+    // En-têtes de colonnes
+    doc.setFontSize(7).setTextColor("#555555");
+    POSTES_FRAIS.forEach((poste, i) => {
+      const nom = libelleLigne({ key: poste, label: poste }, libelles);
+      doc.text(
+        nom.length > 12 ? nom.slice(0, 11) + "." : nom,
+        L + colonneMois + i * largeurPoste,
+        y2,
+        { align: "center", maxWidth: largeurPoste }
+      );
+    });
+    doc.text("Total", R - 60, y2, { align: "right" });
+    y2 += 3;
+    doc.setDrawColor("#999999").setLineWidth(0.7);
+    doc.line(L, y2, R, y2);
+
+    blocs.forEach((bloc) => {
+      y2 += 12;
+      doc.setFont("helvetica", "normal").setFontSize(9).setTextColor(NOIR);
+      doc.text(bloc.titre.replace(/^D[ÉE]TAIL\s*[—-]\s*/i, ""), L + 2, y2, {
+        maxWidth: colonneMois - 6,
+      });
+      POSTES_FRAIS.forEach((poste, i) => {
+        const valeur = Number(bloc.detail[poste]) || 0;
+        doc.setTextColor(valeur > 0 ? NOIR : GRIS);
+        doc.text(
+          valeur > 0 ? formatMoneyPlain(valeur) : "—",
+          L + colonneMois + i * largeurPoste,
+          y2,
+          { align: "center", maxWidth: largeurPoste }
+        );
+      });
+      doc.setFont("helvetica", "bold").setTextColor(NOIR);
+      doc.text(formatMoneyPlain(bloc.montant ?? 0), R - 4, y2, { align: "right" });
+    });
+    y2 += 4;
+    doc.setDrawColor(NOIR).setLineWidth(1);
+    doc.line(L, y2, R, y2);
+  }
 
   /* ============ LA SOMME DE / PAYÉ PAR / LETTRES / SIGNATURE ============ */
+  // Le bas de page est réservé : le code-barres et le numéro de séquence
+  // occupent une bande fixe. La signature s'y empile, et si elle n'y tient
+  // plus elle change de page — sinon elle chevauche le numéro de séquence.
+  const PIED_Y = doc.internal.pageSize.getHeight() - 40;
+  const HAUT_CODE_BARRE = PIED_Y - 44;
+  const BAS_ZONE_SIGNATURE = HAUT_CODE_BARRE - 10;
+
   // Un seul curseur descend : chaque bloc est empilé sous le précédent, ce qui
-  // évite tout chevauchement quel que soit le nombre de lignes.
-  y2 += 26;
+  // évite tout chevauchement quel que soit le nombre de lignes. L'écart est
+  // serré pour qu'un paiement trimestriel tienne sur une seule feuille.
+  y2 += serré ? 14 : 20;
 
   // Sur la même ligne : « La somme de : » à gauche, « Payé par : » à droite,
   // comme sur le modèle officiel.
@@ -352,7 +503,7 @@ export function construireQuittance(q, options = {}) {
   doc.text(payeLabel, COL, y2);
   doc.setFont("helvetica", "bold");
   doc.text(libelleMode(q.mode), COL + doc.getTextWidth(payeLabel) + 4, y2);
-  y2 += 20;
+  y2 += serré ? 16 : 20;
 
   // Montant en lettres, souligné : le trait est dessiné à la largeur du texte.
   doc.setFont("helvetica", "bold").setFontSize(11).setTextColor(NOIR);
@@ -360,18 +511,31 @@ export function construireQuittance(q, options = {}) {
   doc.text(enLettres, L, y2, { maxWidth: W });
   doc.setDrawColor(NOIR).setLineWidth(0.6);
   doc.line(L, y2 + 4, L + doc.getTextWidth(enLettres), y2 + 4);
-  y2 += 24;
+  y2 += serré ? 18 : 24;
 
   doc.setFont("helvetica", "normal").setFontSize(10).setTextColor(NOIR);
   doc.text(`Fait à ${q.villeProprietaire || "—"} le ${frDate(q.datePaiement)}`, L, y2);
-  y2 += 22;
+  y2 += serré ? 10 : 22;
 
-  // Signature : cadre à droite, à hauteur des mentions.
-  doc.setFont("helvetica", "normal").setFontSize(10).setTextColor(NOIR);
-  doc.text("Signature", COL, y2 - 22, { maxWidth: R - COL });
+  // La signature est ancrée en bas à droite, juste au-dessus du pied de page.
+  // Elle ne dépend plus de la position du texte : quelle que soit la longueur
+  // du détail, elle occupe toujours le même coin, et le reçu reste sur une
+  // seule feuille.
   const boxW = 170;
   const boxH = 58;
-  const boxY = y2 - 14;
+  const boxY = BAS_ZONE_SIGNATURE - boxH - 16;
+
+  // Le texte ne descend jamais dans le coin de la signature : au-delà, il
+  // change de page.
+  if (y2 > boxY - 8) {
+    doc.addPage();
+    y2 = 60;
+  }
+
+  doc.setFont("helvetica", "normal").setFontSize(10).setTextColor(NOIR);
+  doc.text("Cachet et signature du propriétaire", COL, boxY - 6, {
+    maxWidth: R - COL,
+  });
   doc.setDrawColor("#4a4a4a").setLineWidth(0.7);
   doc.rect(COL, boxY, boxW, boxH);
   const signature = proprietaire.signatureUrl || signatureBase64;
@@ -401,48 +565,53 @@ export function construireQuittance(q, options = {}) {
         undefined,
         "FAST"
       );
-    } catch {
-      console.warn("Signature illisible, cadre laissé vide :", e && e.message);
+    } catch (erreur) {
+      // La signature est un enrichissement : si elle est illisible, la
+      // quittance reste valable, cadre vide.
+      console.warn("Signature illisible, cadre laissé vide :", erreur?.message);
     }
   }
-  doc.setFontSize(8).setTextColor("#666666");
-  doc.text("Cachet et signature du propriétaire", COL, boxY + boxH + 5, {
-    maxWidth: R - COL,
-  });
 
-  /* ============ PIED DE PAGE ============ */
-  const piedY = doc.internal.pageSize.getHeight() - 40;
-  doc.setDrawColor("#cccccc").setLineWidth(0.5);
-  doc.line(L, piedY, R, piedY);
-  doc.setFont("helvetica", "normal").setFontSize(7).setTextColor("#777777");
-  // Aligné à gauche : le centrage horizontal décale le texte hors de la page
-  // dès que la chaîne contient des caractères accentués.
-  doc.text(
-    "Quittance générée le " + new Date().toLocaleString("fr-FR") + " — à conserver par le locataire.",
-    L,
-    piedY + 12,
-    { maxWidth: W * 0.6 }
-  );
-
-  /* ============ SÉQUENCE ET CODE-BARRES ============ */
-  // La quittance porte son propre identifiant, lisible par un scanner : le
-  // numéro de séquence suffit à retrouver la ligne correspondante dans
-  // « Paiements & Quittances ». Le code est tracé à gauche du pied de page et
-  // le numéro écrit en dessous, comme sur un document de banque.
+  /* ============ PIED DE PAGE ET CODE-BARRES, SUR CHAQUE PAGE ============ */
+  // Dessinés en dernier, page par page : une quittance qui déborde sur une
+  // seconde page doit porter son pied et son code-barres elle aussi.
   const numero = q.numero || q.reference || "";
-  if (numero) {
-    const largeurCode = 190;
-    const xCode = R - largeurCode;
-    const hautCode = piedY - 44;
-    const trace = tracerCodeBarre(doc, xCode, hautCode, largeurCode, 22, numero, { moduleRatio: 2 });
-    if (trace) {
-      // Le libellé passe au-dessus du code : posé entre les barres et le
-      // numéro, il était imprimé sur les traits noirs et devenait illisible.
-      doc.setFont("helvetica", "normal").setFontSize(6).setTextColor("#888888");
-      doc.text("N° DE SÉQUENCE", xCode + trace.largeur / 2, hautCode - 5, { align: "center" });
-      doc.setFontSize(7).setTextColor("#000000");
-      doc.text(numero, xCode + trace.largeur / 2, hautCode + 32, { align: "center" });
+  for (let page = 1; page <= doc.internal.getNumberOfPages(); page++) {
+    doc.setPage(page);
+
+    doc.setDrawColor("#cccccc").setLineWidth(0.5);
+    doc.line(L, PIED_Y, R, PIED_Y);
+    doc.setFont("helvetica", "normal").setFontSize(7).setTextColor("#777777");
+
+    // La quittance porte son propre identifiant, lisible par un scanner : le
+    // numéro de séquence suffit à retrouver la ligne correspondante dans
+    // « Paiements & Quittances ». Le code est tracé **en bas à gauche**, le
+    // numéro écrit en dessous, comme sur un document de banque.
+    if (numero) {
+      const largeurCode = 190;
+      const xCode = L;
+      const trace = tracerCodeBarre(doc, xCode, HAUT_CODE_BARRE, largeurCode, 22, numero);
+      if (trace) {
+        // Le libellé passe au-dessus du code : posé entre les barres et le
+        // numéro, il était imprimé sur les traits noirs et devenait illisible.
+        doc.setFont("helvetica", "normal").setFontSize(6).setTextColor("#888888");
+        doc.text("N° DE SÉQUENCE", xCode + trace.largeur / 2, HAUT_CODE_BARRE - 5, {
+          align: "center",
+        });
+        doc.setFontSize(7).setTextColor(NOIR);
+        doc.text(numero, xCode + trace.largeur / 2, HAUT_CODE_BARRE + 32, { align: "center" });
+      }
     }
+
+    // La mention de conservation se range à droite : le coin gauche est pris
+    // par le code-barres.
+    doc.setFont("helvetica", "normal").setFontSize(7).setTextColor("#777777");
+    doc.text(
+      "Quittance générée le " + new Date().toLocaleString("fr-FR") + " — à conserver par le locataire.",
+      R,
+      PIED_Y + 12,
+      { align: "right", maxWidth: W * 0.55 }
+    );
   }
 
   return doc;

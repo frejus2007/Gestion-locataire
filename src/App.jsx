@@ -9,6 +9,7 @@ import { AppProvider } from "./context/AppContext";
 import { ToastProvider } from "./context/ToastContext";
 import { AuthProvider } from "./context/AuthContext";
 import Layout from "./components/Layout";
+import FiletErreur from "./components/FiletErreur";
 import ProtectedRoute from "./components/ProtectedRoute";
 import SplashScreen from "./components/SplashScreen";
 import { EmptyState } from "./components/ui";
@@ -103,6 +104,10 @@ export default function App() {
           {appPrete && (
             <BrowserRouter>
               <Suspense fallback={<Chargement />}>
+              {/* Le filet d'enveloppe les écrans : une exception y affiche un
+                  message au lieu de vider la page, ce qui laisse l'application
+                  utilisable et le défaut visible. */}
+              <FiletErreur>
               <Routes>
                 {/* Route publique de connexion */}
                 <Route path="/login" element={<Login />} />
@@ -139,6 +144,7 @@ export default function App() {
                   <Route path="*" element={<Introuvable />} />
                 </Route>
               </Routes>
+              </FiletErreur>
             </Suspense>
             </BrowserRouter>
           )}
