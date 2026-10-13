@@ -351,8 +351,12 @@ export function construireQuittance(q, options = {}) {
       ? `${String(q.prenomsLocataire).trim()} ${nomAffiche}`.trim()
       : nomAffiche;
 
+  // Le numéro du logement est le repère que le locataire connaît — R1, E2, A3,
+// Boutique 1. Il prime sur la désignation, qui ne porte souvent que l'étage
+// (« REZ DE CHAUSSEE ») et ne permet pas de retrouver sa chambre.
+  const numeroLogement = texte(q.numeroLot, vivant.numeroLot) || texte(q.designationLot, vivant.designationLot);
   const lignesLocataire = [
-    ["NUMERO APPART.", texte(q.designationLot, vivant.designationLot)],
+    ["NUMERO APPART.", numeroLogement],
     ["NOM & PRENOMS", texte(avecPrenoms, vivant.nomLocataire)],
     ["IFU", texte(q.ifuLocataire, vivant.ifuLocataire)],
     ["TEL", texte(q.telephoneLocataire, vivant.telephoneLocataire)],
@@ -390,17 +394,16 @@ export function construireQuittance(q, options = {}) {
   const serré = blocs.length > 1;
   // Marge de sécurité : cinq points de battement suffisaient à faire basculer le
   // trimestriel sur une deuxième page. On tient donc largement en dessous.
-  const interligne = serré ? 9.5 : 12;
+  const interligne = serré ? 9 : 12;
   const tailleLigne = serré ? 9 : 10;
 
   /** Écrit les sept lignes d'un bloc et rend le curseur juste en dessous. */
   const ecrireBloc = (titre, detailBloc, montantBloc) => {
     doc.setFont("helvetica", "bold").setFontSize(tailleLigne + 1).setTextColor(NOIR);
     doc.text(titre, L, y2, { maxWidth: detailW });
-    if (montantBloc !== undefined) {
-      const somme = formatMoneyPlain(montantBloc);
-      doc.text(somme, L + detailW - doc.getTextWidth(somme), y2);
-    }
+    // Le total n'est plus écrit à droite du titre : il figurerait en bas, sous
+    // les sept lignes. L'afficher deux fois, c'était faire passer le total du
+    // mois pour le loyer.
     y2 += serré ? 5 : 6;
     doc.setDrawColor("#999999").setLineWidth(0.7);
     doc.line(L, y2, L + detailW, y2);
@@ -414,9 +417,26 @@ export function construireQuittance(q, options = {}) {
       // Aligné à droite par sa position : `align` n'est pas fiable avec maxWidth.
       doc.text(montant, L + detailW - 8 - doc.getTextWidth(montant), y2);
     });
-    y2 += serré ? 4 : 5;
+    y2 += serré ? 3 : 5;
     doc.setDrawColor(NOIR).setLineWidth(1);
     doc.line(L, y2, L + detailW, y2);
+
+    // Le total en bas du bloc, comme demandé : le loyer d'un côté, les charges
+    // de l'autre, et le total qui les rassemble. Sans cette ligne, le lecteur
+    // devait additionner les sept lignes lui-même, et le montant placé en tête
+    // du bloc passait pour le loyer — ce qu'il n'est pas dès qu'il y a des
+    // charges.
+    if (montantBloc !== undefined) {
+      // Le total est plus haut que la normale : il se pose juste sous le filet,
+      // pas sur une ligne entière. Trois mois doivent tenir sur une feuille,
+      // et chaque ligne gagnée ici vaut trois points sur le trimestriel.
+      y2 += serré ? 7 : interligne;
+      const total = formatMoneyPlain(montantBloc);
+      const largeurTotal = doc.getTextWidth("TOTAL");
+      doc.setFont("helvetica", "bold").setFontSize(tailleLigne + 1).setTextColor(NOIR);
+      doc.text("TOTAL", L + detailW - 8 - doc.getTextWidth(total) - 6 - largeurTotal, y2);
+      doc.text(total, L + detailW - 8 - doc.getTextWidth(total), y2);
+    }
     return montantBloc;
   };
 
@@ -425,7 +445,7 @@ export function construireQuittance(q, options = {}) {
   // établi plus haut, avant la mise en page.
   if (blocs.length <= 3) {
     blocs.forEach((bloc, i) => {
-      if (i > 0) y2 += 9;
+      if (i > 0) y2 += 7;
       ecrireBloc(bloc.titre, bloc.detail, bloc.montant);
     });
   } else {

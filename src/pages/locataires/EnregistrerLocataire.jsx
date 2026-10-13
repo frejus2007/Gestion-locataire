@@ -13,7 +13,7 @@
 //   ▸ Bail d'un locataire existant       src/pages/locataires/BailForm.jsx
 
 import { useMemo, useState } from "react";
-import { Check, Home, IdCard, FileSignature, KeyRound, Receipt } from "lucide-react";
+import { Check, Home, IdCard, FileSignature, KeyRound } from "lucide-react";
 import { Modal, Field, TextInput, Select, ErrorBanner, ChoixCaution } from "../../components/ui";
 import { useApp } from "../../context/AppContext";
 import { useToast } from "../../context/ToastContext";
@@ -86,9 +86,6 @@ export default function EnregistrerLocataire({ onClose, onEnregistre }) {
     setForm((f) => ({ ...f, [cle]: valeur }));
     setErreurs((e) => ({ ...e, [cle]: undefined }));
   };
-
-  const majFrais = (cle, valeur) =>
-    setForm((f) => ({ ...f, fraisDefaut: { ...f.fraisDefaut, [cle]: valeur } }));
 
   // Lots libres de l'immeuble choisi : c'est là que le locataire va habiter.
   const lotsLibres = useMemo(
@@ -180,12 +177,17 @@ export default function EnregistrerLocataire({ onClose, onEnregistre }) {
       if (!rBail?.ok || !bailId) throw new Error(rBail?.erreur || "Le bail n'a pas pu être créé");
 
       // 4. Les loyers dus depuis l'entrée : sans eux, l'historique est vide.
+      //
+      // La borne haute est le mois courant, jamais la fin du bail. Générer
+      // jusqu'à la fin donnait à chaque locataire une dette imaginaire : au
+      // 1er octobre, novembre et décembre apparaissaient dus alors qu'ils ne
+      // l'étaient pas. Le propriétaire ouvre lui-même chaque mois quand il
+      // encaisse le loyer — c'est lui qui sait ce qu'il a reçu.
       const debut = form.dateDebut.slice(0, 7);
-      const fin = form.dateFin ? form.dateFin.slice(0, 7) : periodeCourante();
       // Via le contexte, et non la couche de données : en mode Firebase un
       // accès direct porterait sur la mémoire locale, et l'historique resterait
       // vide après rechargement.
-      const rLoyers = await genererDepuis(bailId, debut);
+      const rLoyers = await genererDepuis(bailId, debut, periodeCourante());
       if (!rLoyers.ok) throw new Error(rLoyers.erreur || "Les loyers n'ont pas pu être générés");
 
       addToast(
@@ -383,43 +385,12 @@ export default function EnregistrerLocataire({ onClose, onEnregistre }) {
         </Field>
       </div>
 
-      {/* ---------- FRAIS MENSUELS ---------- */}
-      <p className="cag-soustitre">
-        <Receipt size={13} /> Frais mensuels
-      </p>
-      <p className="text-muted" style={{ margin: "0 0 0.6rem", fontSize: "0.8rem" }}>
-        Repris tels quels sur chaque quittance ; ils restent modifiables à chaque
-        encaissement.
-      </p>
-      <div className="grid grid-3">
-        <Field label="Eau">
-          <TextInput
-            type="number"
-            min="0"
-            step="100"
-            value={form.fraisDefaut.eau}
-            onChange={(e) => majFrais("eau", Number(e.target.value) || 0)}
-          />
-        </Field>
-        <Field label="Électricité">
-          <TextInput
-            type="number"
-            min="0"
-            step="100"
-            value={form.fraisDefaut.electricite}
-            onChange={(e) => majFrais("electricite", Number(e.target.value) || 0)}
-          />
-        </Field>
-        <Field label="Ordures ménagères">
-          <TextInput
-            type="number"
-            min="0"
-            step="100"
-            value={form.fraisDefaut.ordures}
-            onChange={(e) => majFrais("ordures", Number(e.target.value) || 0)}
-          />
-        </Field>
-      </div>
+      {/* ---------- NOTES ---------- */}
+      {/* Les frais mensuels ne se saisissent plus ici. Les ordures ménagères,
+          l'eau, l'électricité se paient d'un mois sur l'autre : les inscrire
+          au bail les ajoutait automatiquement à chaque loyer généré, et le
+          locataire se retrouvait débiteur de frais qu'il n'avait pas encore
+          payés. Ils se saisissent à l'encaissement, mois par mois. */}
 
       <Field label="Notes" className="span-2" hint="contacts d'urgence, particularités du dossier…">
         <textarea

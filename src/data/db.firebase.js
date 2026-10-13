@@ -811,6 +811,40 @@ async function lireLoyerDeBail(bailId, periode) {
   return { id: snap.docs[0].id, ...snap.docs[0].data() };
 }
 
+/**
+ * Supprime un loyer seul — un mois saisi par erreur, ou ouvert puis retracted.
+ *
+ * Un garde-fou est non négociable : dès qu'un paiement porte ce loyer, le mois
+ * appartient à l'historique. Le supprimer laisserait une imputation pointant
+ * dans le vide, un relevé faux, et une quittance sans correspondance. On
+ * refuse donc, et on propose de supprimer le paiement — ce que le propriétaire
+ * peut faire depuis la liste des encaissements.
+ *
+ * @param {string} id  identifiant du loyer
+ * @returns {Promise<{ok: boolean, erreur?: string}>}
+ */
+export async function deleteLoyer(id) {
+  const loyer = await lireUn(COLLECTIONS.loyers, id);
+  if (!loyer) return { ok: false, erreur: "Ce mois n'existe plus." };
+
+  const paiements = await lireCollection(COLLECTIONS.paiements);
+  const concerne = paiements.filter((p) =>
+    (p.allocations || []).some((a) => a.loyerId === id)
+  );
+  if (concerne.length > 0) {
+    return {
+      ok: false,
+      erreur:
+        "Ce mois porte déjà un encaissement. Supprimez d'abord le paiement : " +
+        "une quittance a été émise pour lui.",
+    };
+  }
+
+  invaliderToutes();
+  await deleteDoc(doc(db, COLLECTIONS.loyers, id));
+  return { ok: true };
+}
+
 // --- Quittances ---
 
 export const listQuittances = () => lireCollection(COLLECTIONS.quittances);
@@ -924,6 +958,10 @@ export async function genererQuittance(paiementId) {
     ifuLocataire: locataire?.ifu || "",
     telephoneLocataire: locataire?.telephone || "",
     designationLot: lot?.designation || "",
+    // Repère court du logement (R1, E2, A3, Boutique 1). Figé comme le reste :
+    // le numéro de chambre figure sur le reçu et doit rester lisible même si
+    // le logement est renommé ensuite.
+    numeroLot: lot?.numero || "",
     adresseImmeuble: immeuble
       ? [immeuble.adresse, immeuble.ville].filter(Boolean).join(", ")
       : "",

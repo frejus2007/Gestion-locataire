@@ -19,21 +19,50 @@ import {
   AlertTriangle,
   Check,
   Landmark,
+  Plus,
+  Trash2,
 } from "lucide-react";
-import { useApp } from "../../context/AppContext";
-import { Card, EmptyState, Badge } from "../../components/ui";
+import { useApp, estEchuPour } from "../../context/AppContext";
+import { useToast } from "../../context/ToastContext";
+import { Card, EmptyState, Badge, ConfirmDialog } from "../../components/ui";
 import { lignesPostesPour } from "../../data/db.firebase";
 import { formatMoney, formatDate, periodeToLabel, periodeToCourt } from "../../utils/format";
 import Encaissement from "../paiements/Encaissement";
 
-/** Un loyer est-il soldé : plus rien à encaisser sur ce mois ? */
+/**
+ * Un loyer est-il soldé : plus rien à encaisser sur ce mois ?
+ *
+ * Le seuil est le loyer seul. Une charge — ordures ménagères, eau — ne crée
+ * pas une dette si elle n'a pas été facturée, or elle est justement ce que le
+ * propriétaire saisit à l'encaissement et pas avant.
+ */
 function estSolde(loyer, paye) {
-  return (Number(loyer.montantDu) || 0) > 0 && paye >= loyer.montantDu;
+  return loyerSeul(loyer) > 0 && paye >= loyerSeul(loyer);
+}
+
+/** Le loyer seul d'un mois, hors charges. */
+function loyerSeul(loyer) {
+  return Number(loyer?.loyer) || Number(loyer?.montantDu) || 0;
 }
 
 function montantPoste(loyer, poste) {
   if (loyer[poste] !== undefined) return Number(loyer[poste]) || 0;
   return poste === "loyer" ? Number(loyer.montantDu) || 0 : 0;
+}
+
+/**
+ * La part d'une affectation qui couvre le loyer, et non une charge.
+ *
+ * Même règle que la liste des locataires : une charge réglée ne solde pas un
+ * loyer. Sans détail — anciens encaissements — on retombe sur le montant
+ * entier, plafonné au loyer du mois.
+ */
+function couvertParLoyer(affectation, loyer) {
+  const detail = affectation?.detail;
+  if (detail && typeof detail.loyer === "number") {
+    return Math.max(0, Math.min(Number(affectation.montant) || 0, detail.loyer));
+  }
+  return Math.max(0, Math.min(Number(affectation?.montant) || 0, loyer));
 }
 
 export default function Compte() {
@@ -46,12 +75,17 @@ export default function Compte() {
     baux,
     loyersDe,
     paiementsDe,
+    soldesParBail,
   } = useApp();
   // Le mois que le propriétaire a choisi de régler : la modale d'encaissement
   // s'ouvre directement dessus. Sans cela, on ne pouvait régler que « le
   // premier mois dû », et cliquer sur août dans le relevé finissait par
   // facturer octobre.
 const [moisARegler, setMoisARegler] = useState(null);
+  const [aSupprimer, setASupprimer] = useState(null);
+  const [occupe, setOccupe] = useState(false);
+  const { addToast } = useToast();
+  const { ajouterMois, removeLoyer } = useApp();
 
   // La route « /locataires/:id » est appelée avec deux sortes d'identifiants :
   // le bail depuis la liste des locataires (le compte est la carte du bail) et
@@ -67,21 +101,50 @@ const [moisARegler, setMoisARegler] = useState(null);
 
   // Solde cumulé : on additionne chaque mois au précédent, dans l'ordre
   // chronologique. Pas de variable partagée entre deux rendus.
+  //
+  // Deux règles, identiques à la liste des locataires :
+  //  - le cumul porte sur le **loyer seul**, jamais sur les charges ;
+  //  - un mois **non échu** n'ajoute rien au cumul. Il reste visible dans le
+  //    relevé, mais il n'est pas dû : le 1er du mois, il commence à compter.
   const lignes = useMemo(() => {
     if (!bail) return [];
-    const payeParLoyer = new Map();
+const payeParLoyer = new Map();
     for (const p of paiementsDe(bail.id)) {
       for (const a of p.allocations || []) {
-        payeParLoyer.set(a.loyerId, (payeParLoyer.get(a.loyerId) || 0) + a.montant);
+        payeParLoyer.set(
+          a.loyerId,
+          (payeParLoyer.get(a.loyerId) || 0) + Number(a.montant || 0)
+        );
+      }
+    }
+    // Le détail de chaque affectation est conservé : il dit quelle part du
+    // versement a couvert le loyer, et quelle part des charges.
+    const detailParLoyer = new Map();
+    for (const p of paiementsDe(bail.id)) {
+      for (const a of p.allocations || []) {
+        if (a.detail) detailParLoyer.set(a.loyerId, a.detail);
       }
     }
     return loyersDe(bail.id).reduce((acc, l) => {
       const paye = payeParLoyer.get(l.id) || 0;
       const precedent = acc.length ? acc[acc.length - 1].solde : 0;
+      const echu = estEchuPour(l, bail);
+      const loyer = loyerSeul(l);
+      // Une charge réglée ce mois-là ne solde pas ce loyer : seules les lignes
+      // « Loyer » du détail y contribuent.
+      const couvert = Math.min(couvertParLoyer({ ...detailParLoyer.get(l.id), montant: paye }, loyer), loyer);
       acc.push({
         loyer: l,
         paye,
-        solde: precedent + (l.montantDu || 0) - paye,
+        echu,
+        // Une charge a été réglée en plus du loyer : c'est ce qui distingue
+        // « à jour » d'« à jour (charges comprises) ».
+        avecCharges: paye > loyer,
+        // Ce que le versement a réellement couvert du loyer de ce mois.
+        couvert,
+        // Un mois non échu ne pèse pas encore sur le cumul : le 1er novembre,
+        // novembre commence à compter.
+        solde: precedent + (echu ? loyer - couvert : 0),
       });
       return acc;
     }, []);
@@ -101,9 +164,71 @@ const [moisARegler, setMoisARegler] = useState(null);
     return impaye?.loyer.periode || lignes.at(-1)?.loyer.periode || null;
   }, [lignes]);
 
-  const totalDu = lignes.reduce((s, l) => s + (l.loyer.montantDu || 0), 0);
+  /**
+   * Le mois suivant à ouvrir.
+   *
+   * Les mois ne sont plus générés jusqu'à la fin du bail : le propriétaire
+   * ouvre lui-même ceux qu'il encaisse. Sans cela, novembre et décembre
+   * apparaissaient comme dus dès le 1er octobre, et le locataire le payait
+   * deux fois.
+   */
+  const moisSuivant = useMemo(() => {
+    if (lignes.length === 0) return bail?.dateDebut ? bail.dateDebut.slice(0, 7) : null;
+    const dernier = lignes.at(-1).loyer.periode;
+    const annee = Number(dernier.slice(0, 4));
+    const mois = Number(dernier.slice(5, 7));
+    return `${mois === 12 ? annee + 1 : annee}-${String(mois === 12 ? 1 : mois + 1).padStart(2, "0")}`;
+  }, [lignes, bail]);
+
+  const ajouter = async () => {
+    if (!bail || !moisSuivant) return;
+    setOccupe(true);
+    const res = await ajouterMois(bail.id, moisSuivant);
+    setOccupe(false);
+    addToast(
+      res?.ok === false ? res.erreur || "Le mois n'a pas pu être ajouté" : `${periodeToLabel(moisSuivant)} ajouté`,
+      res?.ok === false ? "error" : "success"
+    );
+  };
+
+  const supprimer = async () => {
+    const cible = aSupprimer;
+    setASupprimer(null);
+    if (!cible) return;
+    const res = await removeLoyer(cible.id);
+    addToast(
+      res?.ok === false ? res.erreur || "Le mois n'a pas pu être supprimé" : `${periodeToLabel(cible.periode)} supprimé`,
+      res?.ok === false ? "error" : "success"
+    );
+  };
+
+  // Le solde affiché vient du contexte : c'est lui qui ne retient que les mois
+  // **échus**, et lui que la liste des locataires affiche. Le recalculer ici
+  // sur tous les mois donnait un chiffre différent — un locataire payé jusqu'en
+  // octobre avec novembre et décembre ouverts valait 110 000 dans la liste et
+  // 330 000 dans son compte. Deux écrans, deux réponses, pour la même personne.
+  //
+  // Le tableau ligne à ligne, lui, garde tous les mois : un relevé doit montrer
+  // l'horizon, pas seulement ce qui est exigible aujourd'hui.
+  const soldeAffiche = bail ? soldesParBail.get(bail.id) ?? 0 : 0;
+
+  // Totaux du relevé.
+  //
+  // `totalDu` : les loyers des mois **échus** — sinon la ligne TOTAL
+  // contredirait la colonne Solde juste au-dessus.
+  // `totalCouvert` : ce que les versements couvrent réellement de ces loyers,
+  //   chaque versement étant plafonné au loyer de son mois. C'est cette valeur
+  //   qui entre dans le solde ; les charges réglées ne réduisent pas le dû.
+  // `totalPaye` : les versements bruts, charges comprises — c'est la colonne
+  //   « Paiement » du relevé, elle dit ce qui est entré en caisse.
+  const totalDu = lignes.reduce((s, l) => s + (l.echu ? loyerSeul(l.loyer) : 0), 0);
+  const totalCouvert = lignes.reduce(
+    (s, l) => s + (l.echu ? Math.min(l.couvert, loyerSeul(l.loyer)) : 0),
+    0
+  );
   const totalPaye = lignes.reduce((s, l) => s + l.paye, 0);
-  const soldeFinal = totalDu - totalPaye;
+  // Jamais négatif : payer plus que son loyer laisse le locataire à jour.
+  const soldeReleve = Math.max(0, totalDu - totalCouvert);
 
   if (!bail) {
     return (
@@ -129,6 +254,19 @@ const [moisARegler, setMoisARegler] = useState(null);
           <p>Suivi du compte, loyers et soldes cumulés</p>
         </div>
         <div className="cag-page-actions">
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={ajouter}
+            disabled={occupe || !moisSuivant}
+            title={
+              bail?.dateFin && moisSuivant > bail.dateFin.slice(0, 7)
+                ? "Au-delà de la fin du bail"
+                : `Ajouter ${moisSuivant ? periodeToLabel(moisSuivant) : ""}`
+            }
+          >
+            <Plus size={16} /> {moisSuivant ? periodeToLabel(moisSuivant) : "Mois suivant"}
+          </button>
           <button
             type="button"
             className="btn btn-success"
@@ -165,8 +303,8 @@ const [moisARegler, setMoisARegler] = useState(null);
             </span>
           </div>
         </div>
-        <Badge classe={soldeFinal > 0 ? "badge-red" : "badge-green"}>
-          {soldeFinal > 0 ? "Impayé" : "À jour"}
+        <Badge classe={soldeAffiche > 0 ? "badge-red" : "badge-green"}>
+          {soldeAffiche > 0 ? "Impayé" : "À jour"}
         </Badge>
       </div>
 
@@ -185,12 +323,14 @@ const [moisARegler, setMoisARegler] = useState(null);
           </div>
           <div className="cag-stat-value">{formatMoney(bail.loyerMensuel)}</div>
         </div>
-        <div className={`cag-stat ${soldeFinal > 0 ? "warn" : "ok"}`}>
+        <div className={`cag-stat ${soldeAffiche > 0 ? "warn" : "ok"}`}>
           <div className="cag-stat-label">
-            {soldeFinal > 0 ? <AlertTriangle size={14} /> : <Check size={14} />}
-            Solde {soldeFinal > 0 ? "(dette)" : "(crédit)"}
+            {soldeAffiche > 0 ? <AlertTriangle size={14} /> : <Check size={14} />}
+            Solde {soldeAffiche > 0 ? "(dette)" : "(à jour)"}
           </div>
-          <div className="cag-stat-value">{formatMoney(Math.abs(soldeFinal))}</div>
+          <div className="cag-stat-value">
+            {soldeAffiche > 0 ? formatMoney(soldeAffiche) : "—"}
+          </div>
         </div>
         <div className="cag-stat">
           <div className="cag-stat-label">
@@ -229,10 +369,11 @@ const [moisARegler, setMoisARegler] = useState(null);
                   <th className="num">Total</th>
                   <th className="num">Paiement</th>
                   <th className="num">Solde</th>
+                  <th className="actions" />
                 </tr>
               </thead>
               <tbody>
-                {lignes.map(({ loyer, paye, solde }) => (
+                {lignes.map(({ loyer, paye, solde, echu, avecCharges }) => (
                   <tr
                     key={loyer.id}
                     className={estSolde(loyer, paye) ? "" : "cag-ligne-cliquable"}
@@ -255,13 +396,33 @@ const [moisARegler, setMoisARegler] = useState(null);
                     <td className="num cag-strong">{formatMoney(loyer.montantDu)}</td>
                     <td className={`num ${paye ? "" : "vide"}`}>{paye ? formatMoney(paye) : "—"}</td>
                     <td className="num">
-                      {solde === 0 ? (
-                        <span className="cag-pill ok">à jour</span>
-                      ) : solde > 0 ? (
+                      {solde > 0 ? (
                         <span className="cag-pill money">{formatMoney(solde)}</span>
+                      ) : !echu ? (
+                        // Facturé, pas encore dû : le relevé le montre, la dette
+                        // ne le compte pas.
+                        <span className="cag-muted">non échu</span>
+                      ) : avecCharges ? (
+                        // Le mois a été réglé, charges comprises. À jour, mais
+                        // pas seulement pour son loyer.
+                        <span className="cag-pill ok long">à jour (charges comprises)</span>
                       ) : (
-                        <span className="cag-pill credit">avance {formatMoney(-solde)}</span>
+                        <span className="cag-pill ok">à jour</span>
                       )}
+                    </td>
+                    <td className="actions">
+                      <button
+                        type="button"
+                        className="btn btn-small btn-danger"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setASupprimer(loyer);
+                        }}
+                        title={`Retirer ${periodeToLabel(loyer.periode)} du relevé`}
+                        aria-label={`Retirer ${periodeToLabel(loyer.periode)} du relevé`}
+                      >
+                        <Trash2 size={13} />
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -276,11 +437,10 @@ const [moisARegler, setMoisARegler] = useState(null);
                   ))}
                   <td className="num">{formatMoney(totalDu)}</td>
                   <td className="num">{formatMoney(totalPaye)}</td>
-                  <td className="num">
-                    {soldeFinal === 0
-                      ? "à jour"
-                      : formatMoney(Math.abs(soldeFinal)) + (soldeFinal > 0 ? " dû" : " d'avance")}
+<td className="num">
+                    {soldeReleve === 0 ? "à jour" : `${formatMoney(soldeReleve)} dû`}
                   </td>
+                  <td className="actions" />
                 </tr>
               </tfoot>
             </table>
@@ -317,6 +477,17 @@ const [moisARegler, setMoisARegler] = useState(null);
             </div>
           </div>
         </Card>
+      ) : null}
+
+      {aSupprimer ? (
+        <ConfirmDialog
+          title="Retirer ce mois"
+          message={`${periodeToLabel(aSupprimer.periode)} sera retiré du relevé. Si un encaissement porte déjà ce mois, la suppression sera refusée.`}
+          confirmLabel="Retirer"
+          danger
+          onConfirm={supprimer}
+          onCancel={() => setASupprimer(null)}
+        />
       ) : null}
     </div>
   );

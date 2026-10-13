@@ -14,7 +14,10 @@ import { formatMoney } from "../../utils/format";
 
 const VIDE = { nom: "", adresse: "", quartier: "", ville: "Cotonou", notes: "", dateAcquisition: "", statut: "actif" };
 
-const LOT_VIDE = { designation: "", etage: "", nbPieces: "", loyerReference: "", notes: "" };
+// `numero` est le repère court du logement — R1, E2, A3, Boutique 1. C'est lui
+// qui figure sur la quittance : sans lui, le reçu affichait l'étage à la place
+// du numéro de chambre.
+const LOT_VIDE = { numero: "", designation: "", etage: "", nbPieces: "", loyerReference: "", notes: "" };
 
 export default function ImmeubleForm() {
   const { id } = useParams();
@@ -192,11 +195,21 @@ export default function ImmeubleForm() {
         >
           <ErrorBanner message={erreurGlobale} />
           <div className="form-grid">
-            <Field label="Désignation" required className="span-2">
+            <Field
+              label="Numéro"
+              hint="Imprimé sur la quittance"
+            >
+              <TextInput
+                value={lot.numero}
+                onChange={(e) => setLot((l) => ({ ...l, numero: e.target.value }))}
+                placeholder="R1, E2, A3, Boutique 1…"
+              />
+            </Field>
+            <Field label="Désignation" required>
               <TextInput
                 value={lot.designation}
                 onChange={(e) => setLot((l) => ({ ...l, designation: e.target.value }))}
-                placeholder="Appartement 1 — RDC gauche"
+                placeholder="Appartement à gauche"
               />
             </Field>
             <Field label="Étage">
@@ -285,7 +298,10 @@ function LotTable({ immeubleId, onAjouter }) {
               const loc = bail ? locatairesParId.get(bail.locataireId) : null;
               return (
                 <tr key={l.id}>
-                  <td style={{ fontWeight: 600 }}>{l.designation}</td>
+                  <td style={{ fontWeight: 600 }}>
+                    {l.numero ? `${l.numero} — ` : ""}
+                    {l.designation}
+                  </td>
                   <td className="text-muted">{l.etage || "—"}</td>
                   <td className="num">{l.nbPieces ?? "—"}</td>
                   <td className="num">

@@ -219,9 +219,11 @@ export default function Locataires() {
                     <td className="num">
                       {solde > 0 ? (
                         <span className="cag-pill money">{formatMoney(solde)}</span>
-                      ) : solde < 0 ? (
-                        <span className="cag-pill credit">avance {formatMoney(-solde)}</span>
                       ) : (
+                        // Un solde ne descend jamais sous zéro : payer plus que
+                        // son loyer laisse le locataire à jour, pas créditeur.
+                        // Les charges, flexibles et saisies mois par mois, ne
+                        // pèsent pas ici — le relevé du locataire les montre.
                         <span className="cag-pill ok">à jour</span>
                       )}
                     </td>

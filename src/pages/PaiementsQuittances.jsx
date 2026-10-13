@@ -78,6 +78,24 @@ export default function PaiementsQuittances() {
   const locatairesIndex = useMemo(() => new Map(locataires.map((l) => [l.id, l])), [locataires]);
   const loyersIndex = useMemo(() => new Map(loyers.map((l) => [l.id, l])), [loyers]);
 
+  /**
+   * La période réellement payée.
+   *
+   * `quittance.periode` était figée à l'émission avec le mois courant : toutes
+   * les quittances affichaient donc octobre, alors que les paiements portaient
+   * des mois différents et que le reçu indiquait le bon. Les allocations, elles,
+   * disent ce qui a réellement été réglé.
+   */
+  const periodeAffichee = (quittance) => {
+    const periodes = (quittance.allocations || [])
+      .map((a) => loyersIndex.get(a.loyerId)?.periode)
+      .filter(Boolean)
+      .sort();
+    if (periodes.length === 0) return quittance.periode || "";
+    if (periodes.length === 1) return periodeToLabel(periodes[0]);
+    return `${periodeToLabel(periodes[0])} → ${periodeToLabel(periodes.at(-1))}`;
+  };
+
   const lignes = useMemo(
     () =>
       quittances
@@ -92,9 +110,16 @@ export default function PaiementsQuittances() {
             bail,
           };
         })
-        .sort((a, b) =>
-          (b.quittance.emission || "").localeCompare(a.quittance.emission || "")
-        ),
+// La quittance la plus récente en haut.
+//
+// Le tri se fait sur `sequence`, le compteur attribué à l'émission : c'est lui
+// qui reflète l'ordre réel des documents. Il portait sur `emission`, un champ
+// qui n'a jamais existé — la date réelle s'appelle `dateEmission`. Les deux
+// comparaisons portaient donc sur des chaînes vides, le tri ne triait rien, et
+// l'historique apparaissait dans le désordre.
+.sort((a, b) =>
+  (b.quittance.sequence || 0) - (a.quittance.sequence || 0)
+),
     [quittances, paiements, baux, lotsIndex, immeublesIndex, locatairesIndex]
   );
 
@@ -165,6 +190,7 @@ export default function PaiementsQuittances() {
           ifuLocataire: locataire?.ifu || "",
           telephoneLocataire: locataire?.telephone || "",
           designationLot: lot?.designation || "",
+          numeroLot: lot?.numero || "",
           adresseImmeuble: immeuble
             ? [immeuble.adresse, immeuble.ville].filter(Boolean).join(", ")
             : "",
@@ -325,7 +351,7 @@ export default function PaiementsQuittances() {
                       <strong>{formatMoney(quittance.montant)}</strong>
                       <div className="cag-sub">{detailResume(quittance)}</div>
                     </td>
-                    <td>{quittance.periode || "—"}</td>
+                    <td>{periodeAffichee(quittance) || "—"}</td>
                     <td className="cag-muted">{formatDate(quittance.datePaiement)}</td>
                     <td>
                       <span className={`cag-pill ${paiement?.mode === "especes" ? "warn" : "info"}`}>
@@ -420,6 +446,7 @@ export default function PaiementsQuittances() {
       {aVoir ? (
         <ApercuQuittance
           quittance={aVoir}
+          periode={periodeAffichee(aVoir)}
           onClose={() => setAVoir(null)}
           onTelecharger={() => fabriquer(aVoir, "telecharger")}
           onOuvrir={() => fabriquer(aVoir, "ouvrir")}
@@ -430,7 +457,7 @@ export default function PaiementsQuittances() {
 }
 
 /** Aperçu du détail d'une quittance, avant impression. */
-function ApercuQuittance({ quittance, onClose, onTelecharger, onOuvrir }) {
+function ApercuQuittance({ quittance, periode, onClose, onTelecharger, onOuvrir }) {
   const lignes = LIGNES_FRAIS.map((l) => {
     const valeur = Number(quittance.detail?.[l.key]) || 0;
     const libelle =
@@ -463,7 +490,7 @@ function ApercuQuittance({ quittance, onClose, onTelecharger, onOuvrir }) {
       }
     >
       <p className="text-muted" style={{ margin: "0 0 1rem", fontSize: "0.84rem" }}>
-        {quittance.periode || "—"} · payée le {formatDate(quittance.datePaiement)} par{" "}
+        {periode || "—"} · payée le {formatDate(quittance.datePaiement)} par{" "}
         {libelleMode(quittance.mode)}
       </p>
       <div className="cag-lignes">

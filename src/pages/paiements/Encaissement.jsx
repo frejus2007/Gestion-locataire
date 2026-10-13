@@ -1,4 +1,4 @@
-﻿// Modale d'encaissement : le propriétaire déclare ce qu'il a reçu.
+// Modale d'encaissement : le propriétaire déclare ce qu'il a reçu.
 //
 // L'écran reprend les sept lignes du relevé (loyer, eau, électricité, ordures,
 // dégâts, autre 1, autre 2). Le total se calcule pendant la saisie et n'est pas
@@ -8,11 +8,11 @@
 // fois : c'est le geste réel du propriétaire, qui règle un mois. Un paiement
 // en avance se fait en répétant l'opération mois par mois.
 //
-// Ouverte sans bail — depuis « Paiements & Quittances » — le locataire se
+// Ouverte sans bail  depuis « Paiements & Quittances »  le locataire se
 // choisit en haut de la modale.
 //
-//   ▸ Encaissement              ce fichier
-//   ▸ Liste des encaissements   src/pages/PaiementsQuittances.jsx
+//   ? Encaissement              ce fichier
+//   ? Liste des encaissements   src/pages/PaiementsQuittances.jsx
 
 import { useMemo, useState } from "react";
 import { AlertTriangle, Check, Info } from "lucide-react";
@@ -48,15 +48,15 @@ const AUJOURDHUI = new Date().toISOString().slice(0, 10);
  *
  * La liste démarre au **1er janvier** de l'année du bail, pas au mois de son
  * début : un locataire entré en mars peut avoir des arriérés de janvier et de
- * février — un relevé réel commence rarement au début du bail. En engrossissant
+ * février  un relevé réel commence rarement au début du bail. En engrossissant
  * la liste de deux mois, le propriétaire les retrouve sans avoir à le deviner.
  *
  * On avance jusqu'à la **fin du bail**. Un bail sans terme se règle par
  * anticipation aussi longtemps que le propriétaire le souhaite : la liste n'a
  * donc pas de borne écrite.
  *
- * Les mois antérieurs au début du bail restent sélectionnables — voir leur
- * reste à payer — mais ne sont pas imputables : le bail n'existait pas encore.
+ * Les mois antérieurs au début du bail restent sélectionnables  voir leur
+ * reste à payer  mais ne sont pas imputables : le bail n'existait pas encore.
  */
 function moisProposes(bail) {
   // `dateDebut` est une date complète (« 2026-02-15 ») : on n'en garde que
@@ -139,8 +139,8 @@ export default function Encaissement({
   }, [bail, resteParMois]);
 
   // La période se choisit par ses deux bornes : début et fin. Un loyer se
-  // règle rarement mois par mois — trois mois, six mois, une année d'avance sont
-  // des gestes ordinaires — et deux champs disent la même chose qu'une longue
+  // règle rarement mois par mois  trois mois, six mois, une année d'avance sont
+  // des gestes ordinaires  et deux champs disent la même chose qu'une longue
   // liste de cases à cocher.
   // Elle est mémorisée avec l'identifiant du bail : changer de locataire
   // repart sur la période proposée pour celui-ci.
@@ -206,7 +206,7 @@ export default function Encaissement({
   // surveiller le changement dans un effet.
   // La saisie est mémorisée avec l'identifiant du bail : choisir un autre
   // locataire repart de ses frais. Sans locataire choisi, la clé est vide et
-  // la saisie reste attachée à l'écran — c'est ce qui permet de remplir les
+  // la saisie reste attachée à l'écran  c'est ce qui permet de remplir les
   // charges avant de savoir pour qui.
   const [libellesSaisis, setLibellesSaisis] = useState(null);
 
@@ -260,13 +260,6 @@ export default function Encaissement({
       0
     );
 
-  /** L'intitulé d'un poste, en tenant compte des libellés renommés par poste. */
-  const libellePoste = (cle) => {
-    if (cle === "loyer") return "Loyer";
-    if (libelles[cle]) return libelles[cle];
-    return LIGNES_FRAIS.find((l) => l.key === cle)?.label || cle;
-  };
-
   /** Les sept lignes d'un mois : son loyer restant et ses charges. */
   const lignesDuMois = (mois) => ({ ...chargesDuMois(mois), loyer: resteDe(mois) });
 
@@ -274,7 +267,7 @@ export default function Encaissement({
   //
   // Un mois déjà entamé ne peut pas être soldé une seconde fois de son loyer
   // complet : c'était la cause du refus « montant trop élevé ». Et un arriéré
-  // de juin suivi du mois d'octobre vaut bien deux loyers, pas un seul — les
+  // de juin suivi du mois d'octobre vaut bien deux loyers, pas un seul  les
   // mois incohérents dès qu'un cumul s'y mêle.
   const loyerDuMois = useMemo(
     () => moisCouverts.reduce((s, mois) => s + resteDe(mois), 0),
@@ -398,7 +391,7 @@ montant: totalLignes,
         addToast(
           `Paiement de ${formatMoney(totalLignes)} encaissé` +
             (nbMois > 1 ? ` sur ${nbMois} mois` : "") +
-            " — quittance émise",
+            "  quittance émise",
           "success"
         );
         onEncaisser?.(paiement);
@@ -440,14 +433,14 @@ montant: totalLignes,
           <input className="input" value={nomLocataire(bailFixe)} readOnly />
         ) : (
           <select className="select" value={bailId} onChange={(e) => setBailId(e.target.value)}>
-            <option value="">— Choisir —</option>
+            <option value=""> Choisir </option>
             {baux.map((b) => {
               const lot = lotsParId.get(b.lotId);
               const imm = lot ? immeublesParId.get(lot.immeubleId) : null;
               return (
                 <option key={b.id} value={b.id}>
                   {nomLocataire(b)}
-                  {imm ? ` — ${imm.nom}` : ""}
+                  {imm ? `  ${imm.nom}` : ""}
                 </option>
               );
             })}
@@ -582,52 +575,66 @@ montant: totalLignes,
               ))}
         </div>
       ) : (
-        /* Plusieurs mois : une ligne de charges par mois. L'eau de juin n'est
-           pas celle de décembre, et un relevé réel les distingue. */
-        <div className="cag-table-wrap">
-          <table className="cag-table">
-            <thead>
-              <tr>
-                <th>Mois</th>
-                <th className="num">Loyer dû</th>
-                {POSTES_FRAIS.filter((k) => k !== "loyer").map((k) => (
-                  <th key={k} className="num">
-                    {libellePoste(k)}
-                  </th>
+        /* Plusieurs mois : un bloc par mois, comme pour un seul mois.
+           *
+           * C'était un tableau de huit colonnes dans une modale de 660 px : chaque
+           * champ disposait d'une trentaine de pixels une fois le padding retiré,
+           * et « 1 000 » s'affichait « C ». Le propriétaire ne pouvait plus lire ce
+           * qu'il tapait. Une liste donne à chaque champ toute la largeur de la
+           * ligne, lisible sur l'écran du client comme sur son téléphone. */
+        <div className="cag-detail-mois">
+          {moisCouverts.map((mois) => (
+            <div key={mois} className="cag-detail-bloc">
+              <div className="cag-detail-tete">
+                <span className="cag-detail-nom">{periodeToLabel(mois)}</span>
+                <span className="cag-detail-reste">
+                  Reste à payer <strong>{formatMoney(resteDe(mois))}</strong>
+                </span>
+              </div>
+
+              <div className="cag-lignes">
+                {(poster.length === 0
+                  ? LIGNES_FRAIS.filter((l) => l.key !== "loyer")
+                  : poster.filter((l) => l.key !== "loyer")
+                ).map((l) => (
+                  <div key={l.key} className="cag-ligne">
+                    <span className="cag-ligne-label">
+                      {l.libre ? (
+                        <input
+                          type="text"
+                          className="libelle"
+                          value={libelles[l.key] ?? l.label}
+                          onChange={(e) => majEtiquette(l.key, e.target.value)}
+                          aria-label={`Intitulé de ${l.label}  ${periodeToLabel(mois)}`}
+                        />
+                      ) : (
+                        l.label
+                      )}
+                    </span>
+                    <input
+                      type="number"
+                      className="input montant"
+                      min="0"
+                      step="100"
+                      value={chargesDuMois(mois)[l.key] || 0}
+                      onChange={(e) => majCharge(mois, l.key, e.target.value)}
+                      aria-label={`${l.label}  ${periodeToLabel(mois)}`}
+                    />
+                  </div>
                 ))}
-                <th className="num">Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              {moisCouverts.map((mois) => (
-                <tr key={mois}>
-                  <td>{periodeToLabel(mois)}</td>
-                  <td className="num cag-muted">{formatMoney(resteDe(mois))}</td>
-                  {POSTES_FRAIS.filter((k) => k !== "loyer").map((k) => (
-                    <td key={k} className="num">
-                      <input
-                        type="number"
-                        className="input montant"
-                        min="0"
-                        step="100"
-                        value={chargesDuMois(mois)[k] || 0}
-                        onChange={(e) => majCharge(mois, k, e.target.value)}
-                        aria-label={`${libellePoste(k)} — ${periodeToLabel(mois)}`}
-                      />
-                    </td>
-                  ))}
-                  <td className="num cag-strong">
-                    {formatMoney(resteDe(mois) + totalCharges(mois))}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+              </div>
+
+              <div className="cag-detail-total">
+                <span>Total {periodeToLabel(mois)}</span>
+                <strong>{formatMoney(resteDe(mois) + totalCharges(mois))}</strong>
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
       <div className="cag-total">
-        <span>Total à payer{nbMois > 1 ? ` — ${nbMois} mois` : ""}</span>
+        <span>Total à payer{nbMois > 1 ? `  ${nbMois} mois` : ""}</span>
         <strong>{formatMoney(totalLignes)}</strong>
       </div>
 

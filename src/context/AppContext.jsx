@@ -244,6 +244,13 @@ export function AppProvider({ children }) {
         run(() => db.genererLoyersDepuis(bailId, periodeDebut, periodeFin), ["loyers", "baux"]),
       genererPeriode: (periode) => run(() => db.genererLoyersPourPeriode(periode), ["loyers", "baux"]),
 
+      // La main du propriétaire sur les mois : il ouvre ceux qu'il encaisse et
+      // retire ceux qu'il a ouverts par erreur. La suppression passe par la
+      // couche de données, qui refuse un mois portant déjà un paiement.
+      ajouterMois: (bailId, periode) =>
+        run(() => db.genererLoyersDepuis(bailId, periode, periode), ["loyers", "baux"]),
+      removeLoyer: (id) => run(() => db.deleteLoyer(id), ["loyers"]),
+
       // Paiements : l'imputation change le statut des loyers concernés.
       enregistrerPaiement: (data) =>
         run(() => db.enregistrerPaiement(data), ["paiements", "loyers", "quittances", "baux"]),
@@ -289,6 +296,34 @@ export function AppProvider({ children }) {
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }
 
+/** La période « AAAA-MM » d'un instant donné. */
+export function periodeMois(ref) {
+  const d = ref instanceof Date ? ref : new Date(ref);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+/**
+ * Un loyer est-il échu ?
+ *
+ * Exportée parce que la page Compte doit appliquer exactement la même règle
+ * que la liste des locataires : c'est elle qui fait foi. Deux implémentations
+ * donnaient deux chiffres différents pour un même locataire.
+ *
+ * @param {object} loyer  document du mois
+ * @param {object|null} bail  bail auquel il appartient
+ * @param {Date}   [ref]  instant de référence
+ */
+export function estEchuPour(loyer, bail, ref = new Date()) {
+  // Sans bail, la période fait foi : elle est au format « AAAA-MM ».
+  if (!bail) return (loyer.periode || "") <= periodeMois(ref);
+  // Le jour d'échéance vient du bail ; il est modifiable car certains baux
+  // portent le 5 ou le 10 plutôt que le 1er. Un bail sans jour lisible
+  // retombe sur le 1er, qui est la règle usuelle.
+  const jour = Number(bail.echeanceJour) || 1;
+  return periodeMois(ref) > loyer.periode
+    || (periodeMois(ref) === loyer.periode && ref.getDate() >= jour);
+}
+
 // --- Sélecteurs ---
 //
 // Tout ce qui est calculé (soldes, statuts, totaux) est défini ici. Les pages
@@ -332,9 +367,26 @@ export function createSelecteurs(donnees) {
   const paiementsDe = (bailId) =>
     [...(paiementsParBail.get(bailId) || [])].sort((a, b) => b.date.localeCompare(a.date));
 
-  /** Loyers non soldés, du plus ancien au plus récent — la file des impayés. */
-  const impayesDe = (bailId) =>
-    loyersDe(bailId).filter((l) => l.statut !== "paye");
+  /**
+   * Un loyer est-il échu, au sens du temps et non du contrat ?
+   *
+   * Un bail court souvent bien au-delà du mois courant, et ses loyers sont
+   * générés jusqu'à sa fin. additionner tous ces mois donnait à chaque
+   * locataire une dette imaginaire : au 1er octobre, novembre et décembre
+   * s'ajoutaient au solde alors qu'ils ne sont pas dus. Le propriétaire
+   * voyait une urgence qui n'existait pas, et son locataire était税款 à tort.
+   *
+   * Un loyer n'entre donc dans la dette que le jour de son échéance. Avant,
+   * c'est une facture à venir : elle reste visible, elle n'est pas due.
+   *
+   * @param {object} loyer
+   * @param {Date}   ref  instant de référence
+   */
+  const estEchu = (loyer, ref) => estEchuPour(loyer, bauxParId.get(loyer.bailId), ref);
+
+  /** Loyers non soldés ET échus — la file des impayés. */
+  const impayesDe = (bailId, ref = new Date()) =>
+    loyersDe(bailId).filter((l) => l.statut !== "paye" && estEchu(l, ref));
 
   /** Reste dû sur un loyer, compte tenu des paiements déjà alloués. */
   const resteDuLoyer = (loyerId) => {
@@ -347,21 +399,87 @@ export function createSelecteurs(donnees) {
     return Math.max(0, loyer.montantDu - paye);
   };
 
-  /**
-   * Solde d'un bail : total dû moins total encaissé.
-   * Positif = le locataire doit de l'argent, négatif = il a un crédit.
+  /** Le loyer seul d'un mois, sans les charges. */
+  const loyerSeul = (loyer) =>
+    Number(loyer.loyer) || Number(loyer.montantDu) || 0;
+
+  /** Loyer seul impayé sur un mois : le loyer moins ce qui lui est imputé. */
+  const resteLoyerSeul = (loyer, payeSurLoyer) =>
+    Math.max(0, loyerSeul(loyer) - payeSurLoyer);
+
+/**
+   * La part d'une affectation qui couvre le **loyer**, et non une charge.
+   *
+   * L'encodement porte le détail du mois : on lit la ligne « Loyer » qu'il
+   * contient. Un versement de 2 400 d'eau n'a donc rien soldé du loyer, et la
+   * dette du mois reste entière.
+   *
+   * Un affectation sans détail — les anciens encaissements, enregistrés avant
+   * les sept lignes — retombe sur le montant entier, plafonné au loyer.
+   *
+   * @param {object} affectation  une allocation de paiement
+   * @param {number} loyer         le loyer du mois imputé
    */
-  const soldeBail = (bailId) => {
-    const ls = loyersParBail.get(bailId) || [];
-    const totalDu = ls.reduce((s, l) => s + l.montantDu, 0);
-    const totalPaye = (paiementsParBail.get(bailId) || []).reduce((s, p) => s + p.montant, 0);
-    return totalDu - totalPaye;
+  const couvertParLoyer = (affectation, loyer) => {
+    const detail = affectation?.detail;
+    if (detail && typeof detail.loyer === "number") {
+      return Math.max(0, Math.min(Number(affectation.montant) || 0, detail.loyer));
+    }
+    return Math.max(0, Math.min(Number(affectation?.montant) || 0, loyer));
   };
 
-  const bailEstAJour = (bailId) => impayesDe(bailId).length === 0;
+  /**
+   * Solde d'un bail : ce qui est échu et impayé, en loyers seuls.
+   *
+   * Positif = le locataire doit des loyers. Jamais négatif : un versement
+   * supérieur au loyer laisse le locataire à jour, pas créditeur.
+   *
+   * Deux règles, à ne pas confondre :
+   *
+   * 1. Seuls les **loyers** échus comptent. Les mois à venir sont exclus : le
+   *    propriétaire ouvre lui-même chaque mois quand il l'encaisse, et un mois
+   *    non ouvert ne peut pas être impayé.
+   *
+   * 2. Seuls les **loyers** sont dus. Les ordures ménagères, l'eau et
+   *    l'électricité sont saisis par le propriétaire à l'encaissement : elles
+   *    sont flexibles, d'un montant différent chaque mois, et ne doivent donc
+   *    jamais gonfler une dette de loyer.
+   *
+   * Et, symétriquement, **une charge réglée ne solde pas un loyer** : Josue —
+   * loyer 40 000, 2 400 d'eau payée en septembre — voyait cette eau réduire la
+   * dette d'octobre à 37 600. Elle ne soldait rien. C'est à ça que sert le
+   * plafonnement par ligne « Loyer » du détail.
+   *
+   * Le total est ramené à zéro : un locataire ayant versé plus que son loyer
+   * est à jour, pas créditeur.
+   *
+   * La charge reste suivie ailleurs : le relevé du compte et la quittance
+   * l'affichent, et les encaissements l'enregistrent. Elle n'entre
+   * simplement dans aucun calcul de dette.
+   */
+  const soldeBail = (bailId, ref = new Date()) => {
+    const dus = (loyersParBail.get(bailId) || []).filter((l) => estEchu(l, ref));
+    const dette = dus.reduce((s, l) => {
+      const loyer = loyerSeul(l);
+      const couvert = (paiementsParBail.get(bailId) || []).reduce(
+        (acc, p) =>
+          acc
+          + couvertParLoyer(
+            (p.allocations || []).find((a) => a.loyerId === l.id),
+            loyer
+          ),
+        0
+      );
+      return s + Math.max(0, loyer - Math.min(couvert, loyer));
+    }, 0);
+    return dette;
+  };
+
+  /** Un bail est-il à jour : aucun loyer échu et impayé. */
+  const bailEstAJour = (bailId, ref = new Date()) => impayesDe(bailId, ref).length === 0;
 
   /** Nombre de mois d'impayés consécutifs, du plus ancien impayé. */
-  const moisDImpayes = (bailId) => impayesDe(bailId).length;
+  const moisDImpayes = (bailId, ref = new Date()) => impayesDe(bailId, ref).length;
 
   /** Le lot est-il occupé aujourd'hui ? Dérivé des baux actifs. */
   const lotOccupe = (lotId, ref = new Date()) =>
@@ -433,6 +551,11 @@ export function createSelecteurs(donnees) {
   };
 
   // --- Agrégats globaux ---
+  //
+  // Tous ces chiffres décrivent le même instant. Sans référence partagée, la
+  // liste des impayés et le compteur « à jour » se contredisaient à la minute
+  // où le jour changeait.
+  const instant = new Date();
 
   const impayesGlobaux = () =>
     baux
@@ -445,18 +568,20 @@ export function createSelecteurs(donnees) {
           const l = lotsParId.get(b.lotId);
           return l ? immeublesParId.get(l.immeubleId) || null : null;
         })(),
-        solde: soldeBail(b.id),
-        mois: moisDImpayes(b.id),
+        solde: soldeBail(b.id, instant),
+        mois: moisDImpayes(b.id, instant),
       }))
       .filter((x) => x.solde > 0)
       .sort((a, b) => b.solde - a.solde);
 
   /** Soldes de tous les baux, indexés par bailId. */
-  const soldesParBail = new Map(baux.map((b) => [b.id, soldeBail(b.id)]));
+  const soldesParBail = new Map(
+    baux.map((b) => [b.id, soldeBail(b.id, instant)])
+  );
 
   /** Baux actifs dont le locataire est à jour. */
   const solvable = () =>
-    baux.filter((b) => bailEstActif(b) && impayesDe(b.id).length === 0);
+    baux.filter((b) => bailEstActif(b) && impayesDe(b.id, instant).length === 0);
 
   const cautionTotale = () =>
     baux
@@ -517,6 +642,8 @@ export function createSelecteurs(donnees) {
     paiementsDe,
     impayesDe,
     resteDuLoyer,
+    loyerSeul,
+    resteLoyerSeul,
     soldeBail,
     bailEstAJour,
     moisDImpayes,

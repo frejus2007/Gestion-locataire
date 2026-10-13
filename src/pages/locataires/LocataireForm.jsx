@@ -16,6 +16,7 @@ import { Save, X, Users } from "lucide-react";
 import { useApp } from "../../context/AppContext";
 import { useToast } from "../../context/ToastContext";
 import { Card, Field, TextInput, Select, ErrorBanner, EmptyState } from "../../components/ui";
+import { periodeCourante } from "../../utils/format";
 
 const LOT_NEUF = "__nouveau__";
 
@@ -30,6 +31,7 @@ const VIDE = {
   notes: "",
   lotId: "",
   nouveauLot: "",
+  numeroLot: "",
   loyerMensuel: "",
   dateDebut: new Date().toISOString().slice(0, 10),
 };
@@ -67,6 +69,9 @@ export default function LocataireForm() {
   const id = bail ? bail.locataireId : idRoute;
   const fiche = useApp().locatairesParId.get(id);
   const bailDuLocataire = id ? baux.find((b) => b.locataireId === id) : null;
+  // Le numéro d'appartement appartient au logement, pas au locataire : c'est
+  // lui qui est imprimé sur la quittance. On le lit donc sur le lot du bail.
+  const lotDuBail = bailDuLocataire ? lotsParId.get(bailDuLocataire.lotId) : null;
 
   const [form, setForm] = useState(() => ({
     ...VIDE,
@@ -76,6 +81,7 @@ export default function LocataireForm() {
           lotId: bailDuLocataire.lotId || "",
           loyerMensuel: String(bailDuLocataire.loyerMensuel || ""),
           dateDebut: bailDuLocataire.dateDebut || VIDE.dateDebut,
+          numeroLot: lotDuBail?.numero || "",
         }
       : {}),
   }));
@@ -178,12 +184,26 @@ export default function LocataireForm() {
         const resLot = await saveLot({
           immeubleId: form.immeubleId || lotChoisi?.immeubleId || "",
           designation: form.nouveauLot.trim(),
+          numero: form.numeroLot.trim(),
           loyerReference: loyer,
           statut: "libre",
           notes: "",
         });
         if (!resLot.ok) throw new Error(resLot.erreur || "Le logement n'a pas pu être créé");
         lotId = resLot.resultat.id;
+        }
+      }
+
+      // Le numéro saisi ici corrige le logement choisi. Sans cela, il n'y avait
+      // aucun endroit où renseigner l'appartement du locataire : la quittance
+      // affichait alors l'étage à la place, et le locataire ne retrouvait pas
+      // sa chambre.
+      const numeroSaisi = form.numeroLot.trim();
+      if (lotId && numeroSaisi) {
+        const lot = lotsParId.get(lotId);
+        if (lot && (lot.numero || "") !== numeroSaisi) {
+          const resNum = await saveLot({ ...lot, numero: numeroSaisi }, lotId);
+          if (!resNum.ok) throw new Error(resNum.erreur || "Le numéro d'appartement n'a pas pu être enregistré");
         }
       }
 
@@ -219,10 +239,12 @@ export default function LocataireForm() {
       if (!resBail.ok) throw new Error(resBail.erreur || "Le bail n'a pas pu être enregistré");
 
       // 4. Les loyers dus depuis l'entrée : sans eux, le compte est vide et le
-      //    l'écran paraît faux.
+      //    l'écran paraît faux. La borne haute est le mois courant — jamais la
+      //    fin du bail : générer jusqu'à la fin faisait apparaître des mois
+      //    non dus comme des dettes.
       if (!bailDuLocataire) {
         const debut = form.dateDebut.slice(0, 7);
-        const resLoyers = await genererDepuis(resBail.resultat.id, debut);
+        const resLoyers = await genererDepuis(resBail.resultat.id, debut, periodeCourante());
         if (!resLoyers.ok) throw new Error(resLoyers.erreur || "Les loyers n'ont pas pu être préparés");
       }
 
@@ -293,11 +315,14 @@ export default function LocataireForm() {
                 }}
                 options={[
                   { id: "", label: lotsLibres.length ? "Choisissez le logement" : "Aucun logement disponible" },
-                  ...lotsLibres.map((l) => ({
+...lotsLibres.map((l) => ({
                     id: l.id,
-                    label: `${immeublesParId.get(l.immeubleId)?.nom || "Immeuble"} — ${l.designation}${
-                      l.loyerReference ? ` (${l.loyerReference.toLocaleString("fr-FR")})` : ""
-                    }`,
+                    // Le numéro d'abord : plusieurs chambres d'un même étage
+                    // partagent la même désignation (« REZ DE CHAUSSEE »), et
+                    // c'est R1, R2… qui les distingue.
+                    label: `${immeublesParId.get(l.immeubleId)?.nom || "Immeuble"} - ${
+                      l.numero ? `${l.numero} — ` : ""
+                    }${l.designation}${l.loyerReference ? ` (${l.loyerReference.toLocaleString("fr-FR")})` : ""}`,
                   })),
                   { id: LOT_NEUF, label: "＋ Nouveau logement" },
                 ]}
@@ -326,6 +351,21 @@ export default function LocataireForm() {
                 </Field>
               </>
             ) : null}
+
+            {/* Le numéro d'appartement est ce que le locataire reconnaît et ce
+                qui figure sur le reçu. Sans lui, la quittance affichait la
+                désignation — souvent « REZ DE CHAUSSEE » pour quatre chambres
+                différentes, donc inutile. */}
+            <Field
+              label="Numéro d'appartement"
+              hint="Sur la quittance"
+            >
+              <TextInput
+                value={form.numeroLot}
+                onChange={set("numeroLot")}
+                placeholder="R1, E2, A3, Boutique 1…"
+              />
+            </Field>
 
             <Field label="Loyer mensuel" required error={erreurs.loyerMensuel}>
               <TextInput

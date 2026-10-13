@@ -204,6 +204,14 @@ table.cag-table tfoot td {
 .cag-pill.danger { background: var(--danger-light); color: var(--danger); }
 .cag-pill.money { background: var(--danger-light); color: var(--danger); }
 .cag-pill.credit { background: var(--success-light); color: var(--success-dark); }
+/* Un libellé long (« à jour (charges comprises) ») doit tenir dans une colonne
+   étroite sans forcer un défilement horizontal : c'est le défaut qu'on vient de
+   corriger sur la modale d'encaissement, on ne le reproduit pas ici. */
+.cag-pill.long {
+  font-size: 0.66rem;
+  padding: 0.16rem 0.45rem;
+  letter-spacing: -0.01em;
+}
 
 /* ---------- 5. Détail des sept lignes ---------- */
 .cag-lignes {
@@ -222,11 +230,71 @@ table.cag-table tfoot td {
 }
 .cag-ligne:last-child { border-bottom: 0; }
 .cag-ligne.loyer { background: var(--primary-bg); }
+
+/* ---------- Détail d'un paiement de plusieurs mois ----------
+ *
+ * Un bloc par mois, chacun avec ses charges et son total. Cela remplace un
+ * tableau de huit colonnes qui ne laissait qu'une trentaine de pixels utiles
+ * par champ : le montant saisi n'était plus lisible.
+ */
+.cag-detail-mois {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+.cag-detail-bloc {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card-bg);
+  overflow: hidden;
+}
+.cag-detail-tete {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.8rem;
+  padding: 0.6rem 0.9rem;
+  background: var(--bg-subtle);
+  border-bottom: 1px solid var(--border);
+}
+.cag-detail-nom {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--primary);
+}
+.cag-detail-reste {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+.cag-detail-reste strong { color: var(--text); }
+.cag-detail-total {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.8rem;
+  padding: 0.65rem 0.9rem;
+  border-top: 1px solid var(--border);
+  background: var(--bg-subtle);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.cag-detail-total strong {
+  font-size: 1rem;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
 .cag-ligne-label {
   font-size: 0.85rem;
   font-weight: 500;
   color: var(--text-secondary);
   min-width: 0;
+  /* Un libellé coupé (« Éle ») est pire qu'un libellé qui passe à la ligne :
+     « Électricité » doit rester lisible en entier. */
+  overflow-wrap: normal;
+  word-break: keep-all;
 }
 .cag-ligne input[type="text"].libelle {
   display: block;
@@ -323,6 +391,10 @@ table.cag-table tfoot td {
 .cag-total-periode strong { font-size: 0.95rem; font-variant-numeric: tabular-nums; }
 
 /* ---------- Sélection des mois à régler ---------- */
+/* Grille de cases à cocher des mois. Le détail des charges utilise
+   `.cag-detail-*` : les deux ne doivent pas partager le même nom, sinon la
+   grille ci-dessous s'applique aux blocs de détail et les mois se rangent
+   côte à côte au lieu de s'empiler. */
 .cag-mois {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
@@ -603,6 +675,27 @@ table.cag-releve tr.caution td { background: var(--primary-bg); }
   .cag-stat { padding: 0.8rem 0.9rem; border-radius: var(--radius-sm); }
   .cag-stat-value { font-size: 1.25rem; }
   .cag-ligne { grid-template-columns: 1fr 110px; padding: 0.5rem 0.7rem; }
+  /* Sur téléphone, la colonne Solde du relevé est trop étroite pour un libellé
+     de six mots : il passerait à la ligne et doublerait la hauteur de chaque
+     ligne du tableau. */
+  .cag-pill.long { font-size: 0.62rem; padding: 0.14rem 0.35rem; }
+  .cag-detail-tete { padding: 0.5rem 0.7rem; }
+  .cag-detail-total { padding: 0.55rem 0.7rem; }
+  /* Le libellé passe au-dessus du champ dans le détail d'un paiement : les
+     tenir côte à côte ne laisse au texte que quelques dizaines de pixels, et
+     « Électricité » se retrouve coupé en « Éle ». */
+  .cag-detail-bloc .cag-ligne {
+    grid-template-columns: 1fr;
+    gap: 0.3rem;
+    padding: 0.55rem 0.7rem;
+  }
+  .cag-detail-bloc .cag-ligne-label { font-size: 0.8rem; }
+  /* Le champ prend toute la largeur : le montant saisi est enfin lisible. */
+  .cag-detail-bloc .cag-ligne input.montant {
+    padding: 0.5rem 0.7rem;
+    font-size: 1rem;
+    text-align: right;
+  }
   .cag-total { padding: 0.85rem 1rem; }
   .cag-total strong { font-size: 1.2rem; }
   .cag-reception-row {

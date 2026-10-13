@@ -19,7 +19,7 @@ import {
   periodesEntre,
   comparePeriode,
 } from "../../utils/format";
-import { LIGNES_FRAIS, postesALZero } from "../../data/db.firebase";
+import { postesALZero } from "../../data/db.firebase";
 
 const CAUTIONS = [
   { id: "non-versee", label: "Non versée" },
@@ -277,64 +277,7 @@ cautionVersee: Number(form.cautionVersee) || 0,
                 <Select value={form.cautionStatut} onChange={set("cautionStatut")} options={CAUTIONS} />
               </Field>
 
-              <div className="span-2" style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "0.85rem 1rem" }}>
-                <div style={{ fontSize: "0.82rem", fontWeight: 600, marginBottom: "0.15rem" }}>
-                  Frais habituels
-                </div>
-                <p className="text-muted" style={{ fontSize: "0.8rem", margin: "0 0 0.75rem" }}>
-                  Ces montants pré-remplissent la facture de chaque encaissement. Le
-                  propriétaire les corrigera si la facture du mois change. Mettez 0 si la
-                  charge ne s’applique pas.
-                </p>
-                <div className="form-grid">
-                  {LIGNES_FRAIS.filter((p) => p.key !== "loyer").map((poste) => (
-                    <Field
-                      key={poste.key}
-                      label={
-                        poste.libre ? (
-                          <input
-                            type="text"
-                            className="input"
-                            style={{ fontSize: "0.85rem", padding: "0.3rem 0.5rem" }}
-                            value={form.fraisDefaut[`libelle${poste.libre}`] || poste.label}
-                            onChange={(e) =>
-                              setForm((f) => ({
-                                ...f,
-                                fraisDefaut: {
-                                  ...f.fraisDefaut,
-                                  [`libelle${poste.libre}`]: e.target.value,
-                                },
-                              }))
-                            }
-                            placeholder={poste.label}
-                            aria-label={`Nom de la charge ${poste.label}`}
-                          />
-                        ) : (
-                          poste.label
-                        )
-                      }
-                    >
-                      <TextInput
-                        type="number"
-                        min="0"
-                        step="1"
-                        value={String(form.fraisDefaut[poste.key] || 0)}
-                        onChange={(e) =>
-                          setForm((f) => ({
-                            ...f,
-                            fraisDefaut: {
-                              ...f.fraisDefaut,
-                              [poste.key]: Math.max(0, Math.round(Number(e.target.value) || 0)),
-                            },
-                          }))
-                        }
-                      />
-                    </Field>
-                  ))}
-                </div>
-              </div>
-
-              <Field label="Notes sur le bail" className="span-2">
+                            <Field label="Notes sur le bail" className="span-2">
                 <textarea
                   className="input"
                   value={form.notes}
