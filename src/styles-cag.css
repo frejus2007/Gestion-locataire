@@ -747,3 +747,157 @@ table.cag-releve tr.caution td { background: var(--primary-bg); }
   accent-color: var(--primary);
   cursor: pointer;
 }
+
+/* ---------- Impression : relevé mensuel du compte locataire ----------
+
+   Les règles générales d'impression vivent dans index.css et visent la
+   quittance. Le relevé du compte est une page de tableau : elle demande les
+   siennes.
+
+   Le défaut qui tronquait le PDF venait de `.cag-table-wrap`. Son
+   `overflow-x: auto` fait passer `overflow-y` de `visible` à `auto` — la
+   règle CSS impose ce calcul dès qu'un axe n'est pas `visible`. Le conteneur
+   devient donc un conteneur à défilement, et le navigateur imprime la seule
+   partie visible : le tableau mesure 1214 px pour 743 px utiles, tout ce qui
+   dépasse la largeur de la colonne disparaît du PDF. Les cellules ne sont
+   pas perdues, elles sont hors du cadre.
+
+   On rend le débordement visible, puis on fait tenir le tableau dans la
+   largeur utile de la feuille. */
+
+@media print {
+  /* Le conteneur ne doit plus défiler : tout son contenu doit être imprimé. */
+  .cag-table-wrap {
+    overflow: visible !important;
+    -webkit-overflow-scrolling: auto;
+    border-radius: 0;
+    border-color: #cbd5e1;
+  }
+
+  /* Le tableau doit tenir dans la largeur de la feuille. Sans cela, il reste
+     plus large que la page et le navigateur le répartit sur une page à part,
+     séparée du relevé. */
+  table.cag-releve {
+    width: 100%;
+    /* `fixed` répartit les colonnes dans la largeur de la feuille au lieu de
+       leur laisser prendre leur largeur naturelle. C'est ce qui garantit que
+       le tableau entier tient sur une page : en `auto`, les douze colonnes
+       du relevé mesurent plus large que la feuille et le PDF les coupe. */
+    table-layout: fixed;
+    font-size: 7.5pt;
+  }
+
+  /* Les largeurs minimales des en-têtes imposaient 1214 px de large. En
+     impression, ce sont des suggestions : le contenu décide. */
+  table.cag-releve thead th,
+  table.cag-releve thead th.grand {
+    min-width: 0 !important;
+    white-space: normal;
+    padding: 0.35rem 0.2rem;
+    font-size: 6.8pt;
+    line-height: 1.2;
+    /* En disposition fixe, un en-tête plus long que sa colonne est rogné
+       (« ÉLECTRICITÉ » devenait « ÉLECTRICIT »). Il doit passer à la ligne. */
+    overflow-wrap: break-word;
+    hyphens: auto;
+  }
+
+  /* Les colonnes se partagent la largeur à parts égales, ce qui écrase les
+     en-têtes longs. La période et le paiement sont les deux colonnes dont le
+     texte mérite le plus de place : on leur donne plus large, au détriment du
+     milieu. */
+  table.cag-releve th:nth-child(2),
+  table.cag-releve td:nth-child(2) {
+    width: 9%;
+  }
+
+  table.cag-releve th:nth-child(11),
+  table.cag-releve td:nth-child(11) {
+    width: 11%;
+  }
+
+  /* « 37 000 FCFA » tient sur une seule ligne si on retire les espaces
+     insécables qu'avait imposés `white-space: nowrap`. */
+  table.cag-releve tbody td,
+  table.cag-releve tfoot td {
+    white-space: normal;
+    padding: 0.3rem 0.3rem;
+    font-size: 8pt;
+  }
+
+  /* Un relevé de douze mois tient mal en portrait : les postes de charges
+     passent sur la ligne si la colonne est trop étroite. */
+  table.cag-releve tbody td,
+  table.cag-releve tfoot td {
+    word-break: normal;
+    overflow-wrap: anywhere;
+  }
+
+  /* Les couleurs de fond des lignes signalent l'état du mois : elles font
+     partie de l'information, elles doivent survivre au PDF. */
+  table.cag-releve tr.attention td,
+  table.cag-releve tr.caution td,
+  table.cag-releve tfoot td {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* En-têtes répétés sur chaque page, lignes jamais coupées en deux. */
+  table.cag-releve thead {
+    display: table-header-group;
+  }
+
+  table.cag-releve tfoot {
+    display: table-row-group;
+  }
+
+  table.cag-releve tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* Un badge est fait pour tenir sur une ligne à l'écran. Sur le relevé, sa
+     colonne fait 62 px : sans ceci, le texte déborde de sa cellule et le
+     tableau dépasse à nouveau la largeur de la feuille — le PDF recadre alors
+     la colonne « Paiement ». */
+  table.cag-releve .cag-pill,
+  table.cag-releve .badge,
+  table.cag-releve .chip {
+    white-space: normal !important;
+    display: inline-block;
+    padding: 0.1rem 0.2rem;
+    font-size: 7pt;
+    line-height: 1.15;
+    overflow-wrap: break-word;
+    hyphens: auto;
+  }
+  /* Les boutons de la page ne doivent pas figurer sur le relevé. */
+  .cag-page-actions,
+  .no-print {
+    display: none !important;
+  }
+
+  /* La colonne des poubelles n'a de sens qu'à l'écran : elle retire un mois
+     du relevé, geste sans effet sur une feuille de papier. */
+  table.cag-releve td.actions,
+  table.cag-releve th.actions {
+    display: none !important;
+    width: 0;
+  }
+
+  /* Le rappel « cliquez sur un mois impayé » ne parle qu'à l'écran : il
+     porte sur les lignes du tableau et n'a pas sa place sur le relevé. */
+  table.cag-releve caption .text-muted,
+  .cag-releve + .text-muted,
+  h2 + .text-muted {
+    display: none !important;
+  }
+
+  /* Les cartes d'en-tête gardent leurs bordures, sans ombre ni fond coloré. */
+  .cag-stat-card,
+  .cag-card {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    box-shadow: none !important;
+  }
+}
