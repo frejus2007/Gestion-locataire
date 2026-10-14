@@ -99,23 +99,41 @@ export default function Encaissement({
 
   // Ce qui a déjà été imputé sur chaque loyer : sert à savoir ce qu'il reste
   // à payer, et donc à proposer une période où l'encaissement aboutit.
+  //
+  // Seul le poste « loyer » entre dans ce décompte. Une imputation qui réglait
+  // aussi l'eau ou les ordures ne solde pas le loyer : l'additionner ici
+  // effacerait des mois de loyer que le locataire doit encore. Une imputation
+  // sans détail — les plus anciennes — se lit alors par son montant.
   const alloueParLoyer = useMemo(() => {
     const map = new Map();
     paiements.forEach((p) =>
       (p.allocations || []).forEach((a) => {
-        if (a?.loyerId) map.set(a.loyerId, (map.get(a.loyerId) || 0) + a.montant);
+        if (!a?.loyerId) return;
+        const part = Number(a.detail?.loyer ?? a.montant) || 0;
+        map.set(a.loyerId, (map.get(a.loyerId) || 0) + part);
       })
     );
     return map;
   }, [paiements]);
 
+  // Le loyer restant est le loyer du mois, pas son montant dû.
+  //
+  // Un loyer porte deux nombres : `loyer`, le loyer du contrat, et `montantDu`,
+  // ce même loyer augmenté des charges déjà établies (ordures, eau). C'est
+  // `montantDu` qui sert à savoir si le mois est soldé, mais proposer ce
+  // montant à l'encaissement obligeait le propriétaire à régler d'un bloc
+  // loyer et charges — un loyer de 37 000 s'affichait 37 625.
+  //
+  // L'écran propose donc le loyer seul. Les charges se saisissent à leur
+  // ligne, comme le veut le bordereau, et restent dues tant qu'elles ne sont
+  // pas déclarées.
   const resteParMois = useMemo(() => {
     const map = new Map();
     if (!bail) return map;
     loyers
       .filter((l) => l.bailId === bail.id)
       .forEach((l) => {
-        map.set(l.periode, Math.max(0, (Number(l.montantDu) || 0) - (alloueParLoyer.get(l.id) || 0)));
+        map.set(l.periode, Math.max(0, (Number(l.loyer) || 0) - (alloueParLoyer.get(l.id) || 0)));
       });
     return map;
   }, [bail, loyers, alloueParLoyer]);
