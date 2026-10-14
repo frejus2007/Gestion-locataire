@@ -794,12 +794,18 @@ table.cag-releve tr.caution td { background: var(--primary-bg); }
     min-width: 0 !important;
     white-space: normal;
     padding: 0.35rem 0.2rem;
-    font-size: 6.8pt;
+    font-size: 6.6pt;
     line-height: 1.2;
+    /* L'interlettrage des en-têtes vaut 0,63 px : sur les onze caractères
+       d'« ÉLECTRICITÉ », il consomme les sept pixels manquants pour que le
+       mot tienne dans sa colonne. En impression, la lisibilité vient de la
+       taille, pas de l'aération. */
+    letter-spacing: normal;
     /* En disposition fixe, un en-tête plus long que sa colonne est rogné
-       (« ÉLECTRICITÉ » devenait « ÉLECTRICIT »). Il doit passer à la ligne. */
-    overflow-wrap: break-word;
-    hyphens: auto;
+       (« ÉLECTRICITÉ » devenait « ÉLECTRICIT ») : le texte déborde et la
+       colonne suivante passe dessus. `anywhere` l'oblige à se couper, ce que
+       `break-word` ne fait pas puisque le mot « tient » à un pixel près. */
+    overflow-wrap: anywhere;
   }
 
   /* Les colonnes se partagent la largeur à parts égales, ce qui écrase les
@@ -863,13 +869,14 @@ table.cag-releve tr.caution td { background: var(--primary-bg); }
   table.cag-releve .cag-pill,
   table.cag-releve .badge,
   table.cag-releve .chip {
-    white-space: normal !important;
+    /* « à jour + charges » tient en une ligne si on lui laisse la largeur :
+       mesurée à 68 px, la colonne en offre 72 px. Les césures automatiques
+       coupaient le mot au lieu de le laisser passer à la ligne. */
+    white-space: nowrap;
     display: inline-block;
-    padding: 0.1rem 0.2rem;
-    font-size: 7pt;
-    line-height: 1.15;
-    overflow-wrap: break-word;
-    hyphens: auto;
+    padding: 0.05rem 0.2rem;
+    font-size: 6.5pt;
+    line-height: 1.2;
   }
   /* Les boutons de la page ne doivent pas figurer sur le relevé. */
   .cag-page-actions,

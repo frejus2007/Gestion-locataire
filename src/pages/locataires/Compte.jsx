@@ -405,7 +405,13 @@ const payeParLoyer = new Map();
                       ) : avecCharges ? (
                         // Le mois a été réglé, charges comprises. À jour, mais
                         // pas seulement pour son loyer.
-                        <span className="cag-pill ok long">à jour (charges comprises)</span>
+                        //
+                        // Le libellé doit tenir sur une ligne : en impression la
+                        // colonne fait 62 px de large, et « à jour (charges
+                        // comprises) » se coupait en trois lignes. « + charges »
+                        // dit la même chose — le loyer est soldé et des charges
+                        // sont venues s'y ajouter.
+                        <span className="cag-pill ok long">à jour + charges</span>
                       ) : (
                         <span className="cag-pill ok">à jour</span>
                       )}
