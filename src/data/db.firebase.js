@@ -25,13 +25,11 @@ import {
   setDoc,
   updateDoc,
   deleteDoc,
-  addDoc,
   runTransaction,
   serverTimestamp,
   writeBatch,
   query,
   where,
-  limit,
 } from "firebase/firestore";
 import { db } from "../firebase/config";
 import { comparePeriode, periodeCourante, periodeDecalee } from "../utils/format.js";
@@ -664,6 +662,13 @@ export async function enregistrerPaiement(data) {
   const bail = await lireUn(COLLECTIONS.baux, data.bailId);
   if (!bail) throw new Error("Bail introuvable");
 
+  // Tous les loyers du bail, lus d'un seul coup, et indexés deux fois : par
+  // identifiant pour les imputations, par période pour la marche de l'avance.
+  // Trois boucles en avaient besoin ; chacune relisait ses documents, ce qui
+  // faisait deux à trois requêtes par mois encaissé.
+  const loyersParPeriode = await loyersDuBail(bail.id);
+  const loyersParId = new Map([...loyersParPeriode.values()].map((l) => [l.id, l]));
+
   const allocations = (data.allocations || []).filter((a) => a.montant > 0);
   if (allocations.length === 0) throw new Error("Sélectionnez au moins un mois à régler");
   if (allocations.some((a) => !Number.isSafeInteger(a.montant))) {
@@ -694,10 +699,15 @@ export async function enregistrerPaiement(data) {
 
   let montant = Math.round(Number(data.montant) || 0);
   if (detail) {
+    // Les charges apportées par le versement sont réunies puis écrites d'un
+    // seul lot. La version précédente réécrivait le loyer mois par mois, chacun
+    // à son aller-retour : encaisser une année avec ses charges faisait
+    // douze écritures successives.
+    const chargesAAppliquer = [];
     for (const [i, alloc] of allocations.entries()) {
       const detailDuMois = detailParMois[i];
       if (!detailDuMois) continue;
-      const loyer = await lireUn(COLLECTIONS.loyers, alloc.loyerId);
+      const loyer = loyersParId.get(alloc.loyerId);
       if (!loyer) continue;
       // Le loyer d'un mois ne se réécrit jamais à partir d'un paiement : c'est
       // le contrat qui le fixe. Seules les charges sont mises à jour, et
@@ -706,8 +716,16 @@ export async function enregistrerPaiement(data) {
       const champs = appliquerDetailLoyer(loyer, detailDuMois);
       // Rien à écrire quand le paiement n'apporte aucune charge nouvelle.
       if (Object.keys(champs).length > 0) {
-        await updateDoc(doc(db, COLLECTIONS.loyers, loyer.id), champs);
+        chargesAAppliquer.push({ id: loyer.id, champs });
       }
+    }
+    if (chargesAAppliquer.length) {
+      invalider(COLLECTIONS.loyers);
+      const lotCharges = writeBatch(db);
+      for (const { id, champs } of chargesAAppliquer) {
+        lotCharges.update(doc(db, COLLECTIONS.loyers, id), champs);
+      }
+      await lotCharges.commit();
     }
     montant = allocations.reduce((s, a) => s + a.montant, 0);
   }
@@ -719,30 +737,31 @@ export async function enregistrerPaiement(data) {
   if (totalAlloue > montant) throw new Error("Les mois sélectionnés dépassent le montant reçu");
 
   const paiements = await lireCollection(COLLECTIONS.paiements);
+
+  const periodesChoisies = [];
   for (const alloc of allocations) {
-    const loyer = await lireUn(COLLECTIONS.loyers, alloc.loyerId);
-    if (!loyer) throw new Error("Loyer introuvable dans l'allocation");
-    if (loyer.bailId !== bail.id) throw new Error("Un loyer ne peut pas être imputé à un autre bail");
+    let loyer = loyersParId.get(alloc.loyerId);
+    if (!loyer) {
+      // Un loyer absent de l'index appartient à un autre bail, ou n'existe
+      // plus. Une seule lecture, uniquement sur ce chemin d'erreur, permet de
+      // distinguer les deux et de dire la même chose qu'avant.
+      loyer = await lireUn(COLLECTIONS.loyers, alloc.loyerId);
+      if (!loyer) throw new Error("Loyer introuvable dans l'allocation");
+      throw new Error("Un loyer ne peut pas être imputé à un autre bail");
+    }
     const dejaPaye = totalAllouePourLoyer(paiements, loyer.id, data.paiementIdExistant);
     const reste = loyer.montantDu - dejaPaye;
     if (alloc.montant > reste) {
       throw new Error(`Montant trop élevé pour ${loyer.periode} : il reste ${reste} FCFA à payer`);
     }
+    periodesChoisies.push(loyer.periode || periodeDebutBail(bail));
   }
 
   let avance = montant - totalAlloue;
-  const periodesChoisies = [];
-  for (const alloc of allocations) {
-    const loyer = await lireUn(COLLECTIONS.loyers, alloc.loyerId);
-    periodesChoisies.push(loyer?.periode || periodeDebutBail(bail));
-  }
   let periode = periodesChoisies.sort().at(-1) || periodeDebutBail(bail);
   const periodesAvance = [];
 
-  // Tous les mois du bail sont lus d'un seul coup avant de marcher sur
-  // l'avance. Chaque itération se fait désormais en mémoire.
-  const loyersParPeriode = await loyersDuBail(bail.id);
-
+  // La marche se fait en mémoire : plus aucun aller-retour dans la boucle.
   for (let garde = 0; avance > 0 && garde < 600; garde += 1) {
     periode = periodeDecalee(periode, 1);
     if (!bailCouvre(bail, periode, Infinity)) {
@@ -925,24 +944,69 @@ async function prochainNumeroQuittance() {
  * Émet la quittance d'un paiement. Les mentions sont figées ici : la quittance
  * doit rester identique même si le bail ou les frais changent plus tard.
  */
-export async function genererQuittance(paiementId) {
-  const paiement = await lireUn(COLLECTIONS.paiements, paiementId);
+/**
+ * La documentation dont une quittance a besoin, lue une fois pour toutes.
+ *
+ * Émettre une quittance faisait six lectures d'un document unique — paiement,
+ * bail, lot, immeuble, locataire, propriétaire. Comme `lireUn` n'a pas de
+ * cache, chacune partait sur le réseau. Pire, ces six lectures se refaisaient
+ * à l'identique pour chaque quittance : générer les vingt quittances
+ * manquantes relisait vingt fois le même bail, le même lot et le même immeuble,
+ * en série.
+ *
+ * Les listes passent maintenant par `lireCollection`, qui garde le résultat en
+ * mémoire : la première lecture part sur le réseau, les suivantes sont
+ * gratuites. La numérotation reste séquentielle — un numéro de quittance ne se
+ * permute pas, et deux émissions parallèles se disputeraient le même numéro.
+ *
+ * @returns {Promise<object>} index par identifiant, plus les paiements
+ */
+async function contexteQuittance() {
+  const [paiements, quittances, baux, lots, immeubles, locataires, proprietaire] =
+    await Promise.all([
+      lireCollection(COLLECTIONS.paiements),
+      lireCollection(COLLECTIONS.quittances),
+      lireCollection(COLLECTIONS.baux),
+      lireCollection(COLLECTIONS.lots),
+      lireCollection(COLLECTIONS.immeubles),
+      lireCollection(COLLECTIONS.locataires),
+      getProprietaire(),
+    ]);
+  const parId = (liste) => new Map(liste.map((d) => [d.id, d]));
+  return {
+    paiements: parId(paiements),
+    quittances,
+    baux: parId(baux),
+    lots: parId(lots),
+    immeubles: parId(immeubles),
+    locataires: parId(locataires),
+    proprietaire,
+  };
+}
+
+/**
+ * Émet la quittance d'un paiement, ou renvoie celle qui existe déjà.
+ *
+ * @param {string} paiementId
+ * @param {object} [contexte]  contexte partagé, pour émettre plusieurs
+ *   quittances sans relire la même documentation à chaque fois
+ */
+export async function genererQuittance(paiementId, contexte = null) {
+  const ctx = contexte ?? (await contexteQuittance());
+  const paiement = ctx.paiements.get(paiementId);
   if (!paiement) throw new Error("Paiement introuvable");
 
   // Un paiement a droit à une quittance, une seule. Ouvrir ou télécharger le PDF
   // d'une quittance déjà émise la renvoie telle quelle : sans cette garde, chaque
   // consultation créait un document et consommait un numéro de quittance.
-  const quittances = await lireCollection(COLLECTIONS.quittances);
-  const existante = quittances.find((q) => q.paiementId === paiementId);
+  const existante = ctx.quittances.find((q) => q.paiementId === paiementId);
   if (existante) return existante;
 
-  const bail = await lireUn(COLLECTIONS.baux, paiement.bailId);
-  const lot = bail ? await lireUn(COLLECTIONS.lots, bail.lotId) : null;
-  const immeuble = lot ? await lireUn(COLLECTIONS.immeubles, lot.immeubleId) : null;
-  const locataire = bail
-    ? await lireUn(COLLECTIONS.locataires, bail.locataireId)
-    : null;
-  const proprietaire = await getProprietaire();
+  const bail = ctx.baux.get(paiement.bailId);
+  const lot = bail ? ctx.lots.get(bail.lotId) : null;
+  const immeuble = lot ? ctx.immeubles.get(lot.immeubleId) : null;
+  const locataire = bail ? ctx.locataires.get(bail.locataireId) : null;
+  const { proprietaire } = ctx;
   const { numero, valeur } = await prochainNumeroQuittance();
   const annee = Number(String(numero).slice(2, 6));
 
@@ -993,14 +1057,17 @@ export async function genererQuittance(paiementId) {
 
 /** Émet les quittances manquantes, une fois par paiement. */
 export async function genererQuittancesManquantes() {
-  const [paiements, quittances] = await Promise.all([
-    lireCollection(COLLECTIONS.paiements),
-    lireCollection(COLLECTIONS.quittances),
-  ]);
-  const deja = new Set(quittances.map((q) => q.paiementId));
+  // Toute la documentation est lue une seule fois. La version précédente
+  // lisait le bail, le lot, l'immeuble et le locataire à chaque quittance :
+  // vingt quittances manquantes, c'était vingt lectures du même immeuble en
+  // série, plus d'une minute à ne rien voir passer.
+  const contexte = await contexteQuittance();
+  const deja = new Set(contexte.quittances.map((q) => q.paiementId));
   const creees = [];
-  for (const p of paiements) {
-    if (!deja.has(p.id)) creees.push(await genererQuittance(p.id));
+  // L'émission reste en série : chaque quittance consomme un numéro, et deux
+  // transactions parallèles prendraient le même.
+  for (const p of contexte.paiements.values()) {
+    if (!deja.has(p.id)) creees.push(await genererQuittance(p.id, contexte));
   }
   return creees;
 }
