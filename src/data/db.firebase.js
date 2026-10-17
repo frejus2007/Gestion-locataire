@@ -739,12 +739,16 @@ export async function enregistrerPaiement(data) {
   let periode = periodesChoisies.sort().at(-1) || periodeDebutBail(bail);
   const periodesAvance = [];
 
+  // Tous les mois du bail sont lus d'un seul coup avant de marcher sur
+  // l'avance. Chaque itération se fait désormais en mémoire.
+  const loyersParPeriode = await loyersDuBail(bail.id);
+
   for (let garde = 0; avance > 0 && garde < 600; garde += 1) {
     periode = periodeDecalee(periode, 1);
     if (!bailCouvre(bail, periode, Infinity)) {
       throw new Error("La date de fin du bail ne permet pas d'affecter toute l'avance aux mois suivants");
     }
-    const loyerExistant = await lireLoyerDeBail(bail.id, periode);
+    const loyerExistant = loyersParPeriode.get(periode);
     const montantDu = loyerExistant?.montantDu ?? Number(bail.loyerMensuel);
     const dejaPaye = loyerExistant ? totalAllouePourLoyer(paiements, loyerExistant.id) : 0;
     const reste = montantDu - dejaPaye;
@@ -756,11 +760,23 @@ export async function enregistrerPaiement(data) {
   }
   if (avance > 0) throw new Error("Impossible d'affecter toute l'avance sur la durée restante du bail");
 
-  for (const a of periodesAvance) {
-    await genererLoyersPourPeriode(a.periode, [bail.id], { jusquA: false });
-    const loyer = await lireLoyerDeBail(bail.id, a.periode);
-    if (!loyer) throw new Error(`Impossible de générer le loyer de ${a.periode}`);
-    allocations.push({ loyerId: loyer.id, montant: a.montant });
+  if (periodesAvance.length) {
+    // Tous les mois d'avance sont générés en une seule écriture, puis relus
+    // d'un bloc. La version précédente générait puis relait chaque mois
+    // séparément : deux requêtes par mois d'avance.
+    const premiere = periodesAvance[0].periode;
+    const derniere = periodesAvance.at(-1).periode;
+    // La génération relit la collection des loyers : elle ne doit pas voir
+    // une copie antérieure à ce que nous venons de lire.
+    invalider(COLLECTIONS.loyers);
+    await genererLoyersDepuis(bail.id, premiere, derniere);
+
+    const apres = await loyersDuBail(bail.id);
+    for (const a of periodesAvance) {
+      const loyer = apres.get(a.periode);
+      if (!loyer) throw new Error(`Impossible de générer le loyer de ${a.periode}`);
+      allocations.push({ loyerId: loyer.id, montant: a.montant });
+    }
   }
 
   const paiement = {
@@ -790,25 +806,22 @@ export async function enregistrerPaiement(data) {
 }
 
 /**
- * Le loyer d'un bail pour une période.
+ * Tous les loyers d'un bail, lus en une fois, indexés par période.
  *
- * Interrogeait la collection entière pour en extraire un document : quelques
- * dizaines de loyers pour un seul résultat, et autant de secondes par appel —
- * c'était le principal poste de lenteur à l'encaissement, appelé pour chaque
- * mois d'avance. Firestore sait faire le tri ; deux filtres d'égalité ne
- * demandent aucun index composite.
+ * La marche de l'avance cherchait le mois suivant d'un mois à l'autre, une
+ * requête par mois. Sur un bail sans date de fin, elle en enchaînaient des
+ * centaines — quatre à cinq minutes d'attente avant d'enregistrer quoi que ce
+ * soit, pour une simple quittance. Une seule lecture, et le calcul se fait
+ * ensuite en mémoire.
+ *
+ * @param {string} bailId
+ * @returns {Promise<Map<string, object>>} période → loyer
  */
-async function lireLoyerDeBail(bailId, periode) {
+async function loyersDuBail(bailId) {
   const snap = await getDocs(
-    query(
-      collection(db, COLLECTIONS.loyers),
-      where("bailId", "==", bailId),
-      where("periode", "==", periode),
-      limit(1)
-    )
+    query(collection(db, COLLECTIONS.loyers), where("bailId", "==", bailId))
   );
-  if (snap.empty) return null;
-  return { id: snap.docs[0].id, ...snap.docs[0].data() };
+  return new Map(snap.docs.map((d) => [d.data().periode, { id: d.id, ...d.data() }]));
 }
 
 /**
