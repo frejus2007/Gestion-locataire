@@ -820,6 +820,11 @@ export async function enregistrerPaiement(data) {
   };
 
   await setDoc(doc(db, COLLECTIONS.paiements, paiement.id), paiement);
+  // Sans cette invalidation, la quittance ne relit pas le paiement qu'elle vient
+  // d'écrire : `lireCollection` sert encore la liste d'avant l'écriture, et le
+  // paiement est réputé introuvable. L'oublie affectait aussi le rafraîchissement
+  // qui suit — le nouvel encaissement n'apparaissait pas dans la liste.
+  invaliderToutes();
   await recomputeStatutLoyers(allocations.map((a) => a.loyerId));
   return { paiement, quittance: null };
 }
@@ -962,10 +967,22 @@ async function prochainNumeroQuittance() {
  * @returns {Promise<object>} index par identifiant, plus les paiements
  */
 async function contexteQuittance() {
+  // Les paiements et les quittances sont lus **sans le cache**, et c'est
+  // délibéré.
+  //
+  // Une quittance est presque toujours émise dans la foulée du paiement qu'elle
+  // atteste, et l'émission en masse en crée plusieurs d'affilée. Servis par le
+  // cache — trente secondes de réutilisation — le contexte ne verrait pas le
+  // paiement vient d'être écrit, et le dirait introuvable ; pire encore, une
+  // quittance déjà émise passerait pour absente et se ferait réémettre sous un
+  // nouveau numéro.
+  //
+  // Les autres collections ne changent pas au cours d'une émission : baux, lots,
+  // immeubles et locataires peuvent venir du cache.
   const [paiements, quittances, baux, lots, immeubles, locataires, proprietaire] =
     await Promise.all([
-      lireCollection(COLLECTIONS.paiements),
-      lireCollection(COLLECTIONS.quittances),
+      lireCollection(COLLECTIONS.paiements, { frais: true }),
+      lireCollection(COLLECTIONS.quittances, { frais: true }),
       lireCollection(COLLECTIONS.baux),
       lireCollection(COLLECTIONS.lots),
       lireCollection(COLLECTIONS.immeubles),
@@ -1052,6 +1069,10 @@ export async function genererQuittance(paiementId, contexte = null) {
   };
 
   await setDoc(doc(db, COLLECTIONS.quittances, quittance.id), quittance);
+  // Le cache des quittances est invalidé à chaque émission : une seconde passe
+  // ne doit pas croire cette quittance inexistante et lui attribuer un numéro
+  // supplémentaire.
+  invalider(COLLECTIONS.quittances);
   return quittance;
 }
 
