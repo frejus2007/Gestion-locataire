@@ -20,8 +20,8 @@ import {
 import { useApp } from "../context/AppContext";
 import { useToast } from "../context/ToastContext";
 import { Card, EmptyState, ConfirmDialog, Modal } from "../components/ui";
-import { LIGNES_FRAIS, POSTES_FRAIS } from "../data/db.firebase";
-import { formatMoney, formatDate, periodeToLabel } from "../utils/format";
+import { LIGNES_FRAIS, POSTES_FRAIS } from "../data/db.supabase";
+import { adresseLocativeImmeuble, formatMoney, formatDate, periodeToLabel } from "../utils/format";
 import { construireQuittance, telecharger, ouvrir, preparerLogo, preparerSignature } from "../utils/quittancePdf";
 import Encaissement from "./paiements/Encaissement";
 
@@ -178,10 +178,16 @@ export default function PaiementsQuittances() {
         montant: a.montant,
       }));
 
+      // Le supplément de caution n'est pas un mois de loyer : il est passé à
+      // part, pour s'afficher sous les détails et dans la somme reçue.
+      const supplementCaution =
+        Number(paiements.find((p) => p.id === quittance.paiementId)?.supplementCaution) || 0;
+
       const doc = construireQuittance(quittance, {
         proprietaire,
         periodes,
         blocs,
+        supplementCaution,
         cautionSur: bail?.cautionSur || "",
         // Mentions absentes des quittances émises avant leur mise en place :
         // on les lit ici plutôt que de réécrire les documents déjà délivrés.
@@ -191,9 +197,7 @@ export default function PaiementsQuittances() {
           telephoneLocataire: locataire?.telephone || "",
           designationLot: lot?.designation || "",
           numeroLot: lot?.numero || "",
-          adresseImmeuble: immeuble
-            ? [immeuble.adresse, immeuble.ville].filter(Boolean).join(", ")
-            : "",
+          adresseImmeuble: adresseLocativeImmeuble(immeuble),
         },
       });
       if (action === "ouvrir") ouvrir(doc);
@@ -204,7 +208,9 @@ export default function PaiementsQuittances() {
   };
 
   const supprimer = async () => {
-    const res = await removePaiement(aSupprimer);
+    const cible = aSupprimer;
+    setASupprimer(null);
+    const res = await removePaiement(cible);
     if (res?.ok !== false) {
       // Le paiement et sa quittance partent ensemble, et les loyers reviennent
       // à l'état que leur restent dû. Dire ce qui s'est réellement passé vaut
@@ -216,7 +222,6 @@ export default function PaiementsQuittances() {
           " — les loyers concernés redeviennent dus",
         "success"
       );
-      setASupprimer(null);
     } else {
       addToast(res?.erreur || "Suppression impossible", "error");
     }
@@ -446,6 +451,7 @@ export default function PaiementsQuittances() {
       {aVoir ? (
         <ApercuQuittance
           quittance={aVoir}
+          supplementCaution={Number(paiements.find((p) => p.id === aVoir.paiementId)?.supplementCaution) || 0}
           periode={periodeAffichee(aVoir)}
           onClose={() => setAVoir(null)}
           onTelecharger={() => fabriquer(aVoir, "telecharger")}
@@ -457,7 +463,7 @@ export default function PaiementsQuittances() {
 }
 
 /** Aperçu du détail d'une quittance, avant impression. */
-function ApercuQuittance({ quittance, periode, onClose, onTelecharger, onOuvrir }) {
+function ApercuQuittance({ quittance, supplementCaution = 0, periode, onClose, onTelecharger, onOuvrir }) {
   const lignes = LIGNES_FRAIS.map((l) => {
     const valeur = Number(quittance.detail?.[l.key]) || 0;
     const libelle =
@@ -468,7 +474,8 @@ function ApercuQuittance({ quittance, periode, onClose, onTelecharger, onOuvrir 
         : l.label;
     return { ...l, libelle, valeur };
   });
-  const total = lignes.reduce((s, l) => s + l.valeur, 0);
+  // Le total payé inclut le supplément de caution, comme le PDF et le paiement.
+  const total = lignes.reduce((s, l) => s + l.valeur, 0) + supplementCaution;
 
   return (
     <Modal
@@ -500,6 +507,12 @@ function ApercuQuittance({ quittance, periode, onClose, onTelecharger, onOuvrir 
             <span className="montant">{l.valeur > 0 ? formatMoney(l.valeur) : "—"}</span>
           </div>
         ))}
+        {supplementCaution > 0 && (
+          <div className="cag-ligne">
+            <span className="cag-ligne-label">Dont supplément de caution</span>
+            <span className="montant">{formatMoney(supplementCaution)}</span>
+          </div>
+        )}
       </div>
       <div className="cag-total">
         <span>Total payé</span>

@@ -25,7 +25,7 @@ import {
 import { useApp, estEchuPour } from "../../context/AppContext";
 import { useToast } from "../../context/ToastContext";
 import { Card, EmptyState, Badge, ConfirmDialog } from "../../components/ui";
-import { lignesPostesPour } from "../../data/db.firebase";
+import { lignesPostesPour } from "../../data/db.supabase";
 import { formatMoney, formatDate, periodeToLabel, periodeToCourt } from "../../utils/format";
 import Encaissement from "../paiements/Encaissement";
 
@@ -109,20 +109,17 @@ const [moisARegler, setMoisARegler] = useState(null);
   const lignes = useMemo(() => {
     if (!bail) return [];
 const payeParLoyer = new Map();
+    // Chaque affectation est gardée avec son détail : la part « Loyer » de
+    // chaque versement est plafonnée séparément, comme dans soldeBail.
+    const affectationsParLoyer = new Map();
     for (const p of paiementsDe(bail.id)) {
       for (const a of p.allocations || []) {
         payeParLoyer.set(
           a.loyerId,
           (payeParLoyer.get(a.loyerId) || 0) + Number(a.montant || 0)
         );
-      }
-    }
-    // Le détail de chaque affectation est conservé : il dit quelle part du
-    // versement a couvert le loyer, et quelle part des charges.
-    const detailParLoyer = new Map();
-    for (const p of paiementsDe(bail.id)) {
-      for (const a of p.allocations || []) {
-        if (a.detail) detailParLoyer.set(a.loyerId, a.detail);
+        if (!affectationsParLoyer.has(a.loyerId)) affectationsParLoyer.set(a.loyerId, []);
+        affectationsParLoyer.get(a.loyerId).push(a);
       }
     }
     return loyersDe(bail.id).reduce((acc, l) => {
@@ -132,7 +129,13 @@ const payeParLoyer = new Map();
       const loyer = loyerSeul(l);
       // Une charge réglée ce mois-là ne solde pas ce loyer : seules les lignes
       // « Loyer » du détail y contribuent.
-      const couvert = Math.min(couvertParLoyer({ ...detailParLoyer.get(l.id), montant: paye }, loyer), loyer);
+      const couvert = Math.min(
+        (affectationsParLoyer.get(l.id) || []).reduce(
+          (s, a) => s + couvertParLoyer(a, loyer),
+          0
+        ),
+        loyer
+      );
       acc.push({
         loyer: l,
         paye,

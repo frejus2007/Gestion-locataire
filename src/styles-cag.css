@@ -134,6 +134,18 @@
   border-radius: var(--radius);
   background: var(--card-bg);
 }
+/* Barre de défilement reproduite au-dessus du tableau (voir TableauDefilable). */
+.cag-defil-haut {
+  overflow-x: auto;
+  overflow-y: hidden;
+  margin-bottom: 0.25rem;
+}
+.cag-table-wrap.cag-sans-barre {
+  scrollbar-width: none;
+}
+.cag-table-wrap.cag-sans-barre::-webkit-scrollbar {
+  display: none;
+}
 table.cag-table {
   width: 100%;
   border-collapse: separate;
@@ -355,6 +367,98 @@ table.cag-table tfoot td {
   line-height: 1.45;
 }
 .cag-refus svg { flex: none; margin-top: 1px; }
+
+/* ---------- Recherche du locataire (encaissement) ----------
+ * Les propositions s'affichent sous le champ, au-dessus de la liste. */
+.cag-recherche { position: relative; margin-bottom: 0.4rem; }
+.cag-recherche .input { margin-bottom: 0; }
+.cag-suggestions {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 0.3rem;
+  list-style: none;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+.cag-suggestions li button {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  text-align: left;
+  color: var(--text);
+  cursor: pointer;
+}
+.cag-suggestions li button:hover,
+.cag-suggestions li button:focus-visible {
+  background: var(--primary-bg);
+  outline: none;
+}
+.cag-suggestions li button span { font-size: 0.78rem; color: var(--text-secondary); }
+.cag-suggestions li[aria-selected="true"] button strong { color: var(--primary); }
+.cag-suggestions li.vide { padding: 0.5rem 0.6rem; font-size: 0.85rem; color: var(--text-secondary); }
+
+/* ---------- Supplément de caution (encaissement) ----------
+ * Un encadré bien visible : coché, il prend la couleur d'accent et compte dans
+ * le total ; décoché, il est grisé et son montant ne compte pas. */
+.cag-supplement {
+  display: grid;
+  grid-template-columns: 1fr 170px;
+  align-items: center;
+  gap: 0.8rem;
+  margin-top: 0.9rem;
+  padding: 0.8rem 0.95rem;
+  border: 2px solid var(--primary);
+  border-radius: 8px;
+  background: var(--primary-bg);
+}
+.cag-supplement.inactif {
+  border: 2px dashed var(--border);
+  background: var(--bg);
+}
+.cag-supplement-case {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  cursor: pointer;
+}
+.cag-supplement-titre {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.cag-supplement-titre input[type="checkbox"] {
+  width: 22px;
+  height: 22px;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+.cag-supplement-aide {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  padding-left: 2.2rem;
+}
+.cag-supplement.inactif .cag-supplement-titre { color: var(--text-secondary); font-weight: 600; }
+.cag-supplement input.montant:disabled {
+  background: var(--bg);
+  color: var(--text-secondary);
+  border-style: dashed;
+  cursor: not-allowed;
+}
 .cag-total {
   display: flex;
   align-items: center;

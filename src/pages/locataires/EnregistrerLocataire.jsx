@@ -17,7 +17,7 @@ import { Check, Home, IdCard, FileSignature, KeyRound } from "lucide-react";
 import { Modal, Field, TextInput, Select, ErrorBanner, ChoixCaution } from "../../components/ui";
 import { useApp } from "../../context/AppContext";
 import { useToast } from "../../context/ToastContext";
-import { postesALZero } from "../../data/db.firebase";
+import { postesALZero } from "../../data/db.supabase";
 import { formatMoney, periodeCourante } from "../../utils/format";
 
 const AUJOURDHUI = new Date().toISOString().slice(0, 10);
@@ -72,7 +72,7 @@ export default function EnregistrerLocataire({ onClose, onEnregistre }) {
     dateFin: "",
     loyerMensuel: "",
     // Caution
-    cautionVersee: 0,
+    cautionVersee: "",
     cautionStatut: "non-versee",
     cautionSur: "",
     // Frais

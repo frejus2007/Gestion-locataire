@@ -19,7 +19,7 @@ import { AlertTriangle, Check, Info } from "lucide-react";
 import { Modal } from "../../components/ui";
 import { useApp } from "../../context/AppContext";
 import { useToast } from "../../context/ToastContext";
-import { LIGNES_FRAIS, lignesPostesPour, POSTES_FRAIS } from "../../data/db.firebase";
+import { LIGNES_FRAIS, lignesPostesPour, POSTES_FRAIS } from "../../data/db.supabase";
 import {
   formatMoney,
   periodeToLabel,
@@ -42,6 +42,13 @@ const LIBELLES_MODES = {
 const MODES = Object.keys(LIBELLES_MODES).filter((m) => m !== "mobile");
 
 const AUJOURDHUI = new Date().toISOString().slice(0, 10);
+
+// Pour la recherche : sans accents ni majuscules, « eglise » trouve « Église ».
+const normaliser = (texte) =>
+  String(texte || "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase();
 
 /**
  * Les mois proposés dans les deux listes de période.
@@ -88,13 +95,14 @@ export default function Encaissement({
   onEncaisser,
 }) {
   const { bauxParId, lotsParId, immeublesParId, baux, locatairesParId, loyers, paiements,
-          enregistrerPaiement, genererQuittance, genererDepuis } = useApp();
+          enregistrerPaiement, verifierEncaissement, genererQuittance } = useApp();
   const { addToast } = useToast();
 
   // Locataire déjà connu (ouverture depuis une fiche) : on bloque le sélecteur.
   const bailFixe = bailInitial || null;
 
   const [bailId, setBailId] = useState(bailFixe?.id || "");
+  const [recherche, setRecherche] = useState("");
   const bail = bailFixe || bauxParId.get(bailId) || null;
 
   // Ce qui a déjà été imputé sur chaque loyer : sert à savoir ce qu'il reste
@@ -292,10 +300,10 @@ export default function Encaissement({
     [moisCouverts, resteParMois, mensuel]
   );
 
-  const chargesTotales = useMemo(
-    () => moisCouverts.reduce((s, mois) => s + totalCharges(mois), 0),
-    [moisCouverts]
-  );
+  // Pas de mémo : les charges changent à chaque frappe, et un total figé ne
+  // recevait ni l'eau ni l'Autre saisis. L'encaissement partait alors avec un
+  // montant qui ne correspondait pas aux lignes, d'où le refus à l'enregistrement.
+  const chargesTotales = moisCouverts.reduce((s, mois) => s + totalCharges(mois), 0);
 
   // Le reste à payer borne l'encaissement : c'est lui, et non le loyer du
   // bail, qui dit ce qu'on peut recevoir.
@@ -304,7 +312,18 @@ export default function Encaissement({
     [moisCouverts, resteParMois, mensuel]
   );
 
-  const totalLignes = loyerDuMois + chargesTotales;
+  // Supplément de caution : une caution restée impayée, réglée à cet
+  // encaissement. Il s'ajoute à la caution déjà versée du bail, et ne compte
+  // dans le total que s'il est coché.
+  const [supp, setSupp] = useState(null);
+  const supplement =
+    supp && supp.bailId === (bail?.id || "") ? supp : { actif: false, montant: "" };
+  const suppMontant = supplement.actif
+    ? Math.max(0, Math.round(Number(supplement.montant) || 0))
+    : 0;
+  const majSupplement = (champs) => setSupp({ bailId: bail?.id || "", ...supplement, ...champs });
+
+  const totalLignes = loyerDuMois + chargesTotales + suppMontant;
   const nbMois = moisCouverts.length;
 
   // Le refus de la couche de données est annoncé avant le clic : sans cela, le
@@ -314,6 +333,10 @@ export default function Encaissement({
   const enregistrer = async () => {
     if (!bail) {
       addToast("Choisissez un locataire", "error");
+      return;
+    }
+    if (supplement.actif && suppMontant <= 0) {
+      addToast("Indiquez le montant du supplément de caution, ou décochez-le", "error");
       return;
     }
     if (totalLignes <= 0) {
@@ -333,21 +356,8 @@ export default function Encaissement({
       return;
     }
 
-    // Les loyers des mois couverts doivent exister avant d'imputer le paiement :
-    // ils sont créés à la volée, ce qui évite une manipulation à part.
-    // On passe par le contexte, et non par la couche de données en direct : en
-    // mode Firebase, un accès direct porterait sur la mémoire locale et les
-    // loyers seraient recréés à chaque encaissement.
-const gen = await genererDepuis(bail.id, debut, fin);
-    if (!gen.ok) {
-      addToast(gen.erreur || "Impossible de préparer les loyers", "error");
-      return;
-    }
-    // `run` recharge la base : les loyers créés sont donc disponibles dans
-    // `gen.donnees`, pas dans `loyers` (qui date du rendu précédent).
-    const loyersFrais = gen.donnees?.loyers || [];
     // Un mois antérieur au bail n'a pas de loyer : la liste démarre en janvier
-    // pour retrouver les arriérés, mais le locataire n occupait pas encore le
+    // pour retrouver les arriérés, mais le locataire n'occupait pas encore le
     // logement. Le dire vaut mieux qu'un « aucun loyer » énigmatique.
     const avantBail = moisCouverts.find(
       (mois) => String(bail.dateDebut || "").slice(0, 7) > mois
@@ -365,59 +375,78 @@ const gen = await genererDepuis(bail.id, debut, fin);
     // ce qui permet de solder un arriéré de juin sans lui mettre l'eau de
     // décembre. Le détail de chaque mois part avec son affectation, la
     // quittance les relit bloc par bloc.
+    //
+    // Un mois sans loyer encore créé n'est pas bloquant : on envoie son numéro,
+    // et la couche de données crée le loyer dans la même écriture que le paiement.
     const allocations = [];
     const details = [];
     for (const mois of moisCouverts) {
-      const loyer = loyersFrais.find((l) => l.bailId === bail.id && l.periode === mois);
-      if (!loyer) {
-        addToast(`Aucun loyer ne correspond à ${periodeToLabel(mois)}`, "error");
-        return;
-      }
-      const lignes = lignesDuMois(mois);
+      const loyer = loyers.find((l) => l.bailId === bail.id && l.periode === mois);
       allocations.push({
-        loyerId: loyer.id,
+        loyerId: loyer?.id,
+        periode: mois,
         montant: resteDe(mois) + totalCharges(mois),
       });
-      details.push(lignes);
+      details.push(lignesDuMois(mois));
     }
 
-      try {
-        const res = await enregistrerPaiement({
-          bailId: bail.id,
-          locataireId: bail.locataireId,
-          date,
-          mode,
-          note: note.trim(),
-montant: totalLignes,
-        detail: lignesDuMois(fin),
-        details,
-        libelles,
-        allocations,
-      });
-      // La couche de données renvoie { paiement, quittance } : c'est le
-      // paiement créé qu'il faut utiliser pour émettre la quittance.
+    // Le contrôle « montant trop élevé » est fait par la couche de données
+    // (verifierEncaissement, plus bas), qui connaît le dû réel après ajout des
+    // charges. Un contrôle ici, sur le dû d'avant les charges, refusait à tort
+    // tout encaissement d'un loyer déjà généré avec une charge saisie.
+
+    // L'encaissement s'affiche tout de suite : l'écriture part, la liste se met à
+    // jour dès que l'écoute la reçoit, puis la quittance suit. Un refus arrive
+    // ensuite, et le paiement disparaît de la liste.
+    // Un mois déjà soldé n'est pas imputé : le message compte les mois réellement payés.
+    const moisImputes = allocations.filter((a) => a.montant > 0).length;
+    const donneesPaiement = {
+      bailId: bail.id,
+      locataireId: bail.locataireId,
+      date,
+      mode,
+      note: note.trim(),
+      montant: totalLignes,
+      supplementCaution: suppMontant,
+      detail: lignesDuMois(fin),
+      details,
+      libelles,
+      allocations,
+    };
+    // Le contrôle se fait avant de fermer : un refus garde le formulaire ouvert.
+    try {
+      verifierEncaissement(donneesPaiement);
+    } catch (erreur) {
+      addToast(erreur.message, "error");
+      return;
+    }
+    const enCours = enregistrerPaiement(donneesPaiement);
+    onEncaisser?.();
+
+    try {
+      const res = await enCours;
+      // La couche de données renvoie { paiement, quittance } : c'est le paiement
+      // créé qu'il faut utiliser pour émettre la quittance.
       const paiement = res?.resultat?.paiement;
-      if (res?.ok && paiement?.id) {
-        // La quittance est émise avant le message : sur Firestore l'écriture
-        // est réseau, afficher « quittance émise » puis échouer en silence
-        // laisserait croire à un reçu que le locataire n'a pas.
-        const emise = await genererQuittance(paiement.id);
-        if (!emise.ok) {
-          addToast("Paiement enregistré, mais la quittance n'a pas pu être émise", "error");
-          return;
-        }
-        addToast(
-          `Paiement de ${formatMoney(totalLignes)} encaissé` +
-            (nbMois > 1 ? ` sur ${nbMois} mois` : "") +
-            "  quittance émise",
-          "success"
-        );
-        onEncaisser?.(paiement);
-      } else {
+      if (!res?.ok || !paiement?.id) {
         // `run` signale l'échec avec `erreur` : la masquer rendrait un refus
         // d'écriture incompréhensible pour le propriétaire.
         addToast(res?.erreur || "Encaissement impossible", "error");
+        return;
       }
+      // La quittance est émise avant le message : afficher « quittance émise »
+      // puis échouer en silence laisserait croire à un reçu que le locataire n'a pas.
+      const emise = await genererQuittance(paiement.id);
+      if (!emise.ok) {
+        addToast("Paiement enregistré, mais la quittance n'a pas pu être émise", "error");
+        return;
+      }
+      addToast(
+        `Paiement de ${formatMoney(totalLignes)} encaissé` +
+          (moisImputes > 1 ? ` sur ${moisImputes} mois` : "") +
+          "  quittance émise",
+        "success"
+      );
     } catch (erreur) {
       addToast(erreur.message || "Encaissement impossible", "error");
     }
@@ -427,6 +456,31 @@ montant: totalLignes,
   const nomLocataire = (b) => {
     const loc = b ? locatairesParId.get(b.locataireId) : null;
     return loc ? `${loc.prenoms} ${loc.nom}`.trim() : "Locataire";
+  };
+
+  // Recherche par nom, immeuble ou logement. Le locataire déjà choisi reste
+  // dans la liste, même s'il ne correspond pas à la recherche.
+  const bauxFiltres = useMemo(() => {
+    const motif = normaliser(recherche.trim());
+    if (!motif) return baux;
+    return baux.filter((b) => {
+      if (b.id === bailId) return true;
+      const lot = lotsParId.get(b.lotId);
+      const imm = lot ? immeublesParId.get(lot.immeubleId) : null;
+      const loc = locatairesParId.get(b.locataireId);
+      const texte = normaliser(
+        [loc ? `${loc.prenoms} ${loc.nom}` : "", imm?.nom, lot?.designation, lot?.numero]
+          .filter(Boolean)
+          .join(" ")
+      );
+      return texte.includes(motif);
+    });
+  }, [baux, recherche, bailId, lotsParId, immeublesParId, locatairesParId]);
+
+  // Choisir une proposition : le locataire est sélectionné, la recherche se referme.
+  const choisirDepuisRecherche = (id) => {
+    setBailId(id);
+    setRecherche("");
   };
 
   return (
@@ -450,9 +504,49 @@ montant: totalLignes,
         {bailFixe ? (
           <input className="input" value={nomLocataire(bailFixe)} readOnly />
         ) : (
+          <>
+            <div className="cag-recherche">
+              <input
+                type="search"
+                className="input"
+                value={recherche}
+                onChange={(e) => setRecherche(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && recherche.trim() && bauxFiltres[0]) {
+                    e.preventDefault();
+                    choisirDepuisRecherche(bauxFiltres[0].id);
+                  }
+                  if (e.key === "Escape") setRecherche("");
+                }}
+                placeholder="Rechercher un locataire, un immeuble, un logement…"
+                aria-label="Rechercher un locataire"
+                autoComplete="off"
+              />
+              {recherche.trim() ? (
+                <ul className="cag-suggestions" role="listbox" aria-label="Propositions">
+                  {bauxFiltres.slice(0, 8).map((b) => {
+                    const lot = lotsParId.get(b.lotId);
+                    const imm = lot ? immeublesParId.get(lot.immeubleId) : null;
+                    return (
+                      <li key={b.id} role="option" aria-selected={b.id === bailId}>
+                        <button type="button" onClick={() => choisirDepuisRecherche(b.id)}>
+                          <strong>{nomLocataire(b)}</strong>
+                          <span>
+                            {[imm?.nom, lot?.numero || lot?.designation].filter(Boolean).join(" · ")}
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                  {bauxFiltres.length === 0 ? (
+                    <li className="vide">Aucun locataire ne correspond à « {recherche.trim()} »</li>
+                  ) : null}
+                </ul>
+              ) : null}
+            </div>
           <select className="select" value={bailId} onChange={(e) => setBailId(e.target.value)}>
             <option value=""> Choisir </option>
-            {baux.map((b) => {
+            {bauxFiltres.map((b) => {
               const lot = lotsParId.get(b.lotId);
               const imm = lot ? immeublesParId.get(lot.immeubleId) : null;
               return (
@@ -463,6 +557,7 @@ montant: totalLignes,
               );
             })}
           </select>
+          </>
         )}
       </label>
 
@@ -555,7 +650,7 @@ montant: totalLignes,
                     min="0"
                     step="1"
                     readOnly={l.key === "loyer"}
-                    value={(nbMois === 1 ? lignesDuMois(debut) : lignesDuMois(fin))[l.key] ?? 0}
+                    value={(nbMois === 1 ? lignesDuMois(debut) : lignesDuMois(fin))[l.key] || ""}
                     onChange={(e) => majCharge(nbMois === 1 ? debut : fin, l.key, e.target.value)}
                     aria-label={l.label}
                   />
@@ -585,7 +680,7 @@ montant: totalLignes,
                     min="0"
                     step="1"
                     readOnly={ligne.key === "loyer"}
-                    value={(nbMois === 1 ? lignesDuMois(debut) : lignesDuMois(fin))[ligne.key] ?? 0}
+                    value={(nbMois === 1 ? lignesDuMois(debut) : lignesDuMois(fin))[ligne.key] || ""}
                     onChange={(e) => majCharge(nbMois === 1 ? debut : fin, ligne.key, e.target.value)}
                     aria-label={ligne.label}
                   />
@@ -634,7 +729,7 @@ montant: totalLignes,
                       className="input montant"
                       min="0"
                       step="100"
-                      value={chargesDuMois(mois)[l.key] || 0}
+                      value={chargesDuMois(mois)[l.key] || ""}
                       onChange={(e) => majCharge(mois, l.key, e.target.value)}
                       aria-label={`${l.label}  ${periodeToLabel(mois)}`}
                     />
@@ -650,6 +745,40 @@ montant: totalLignes,
           ))}
         </div>
       )}
+
+      <div className={`cag-supplement${supplement.actif ? " actif" : " inactif"}`}>
+        <label className="cag-supplement-case">
+          <span className="cag-supplement-titre">
+            <input
+              type="checkbox"
+              checked={supplement.actif}
+              onChange={(e) => majSupplement({ actif: e.target.checked })}
+            />
+            Supplément Caution
+          </span>
+          <span className="cag-supplement-aide">
+            {supplement.actif
+              ? "Ajouté à la caution du locataire et compté dans le total"
+              : "Cochez pour ajouter une caution impayée à ce versement"}
+          </span>
+        </label>
+        <input
+          type="number"
+          className="input montant"
+          min="0"
+          step="1000"
+          disabled={!supplement.actif}
+          value={supplement.montant}
+          onChange={(e) => majSupplement({ montant: e.target.value })}
+          aria-label="Montant du supplément de caution"
+        />
+      </div>
+      {supplement.actif && bail ? (
+        <p className="cag-reste">
+          Caution : {formatMoney(bail.cautionVersee || 0)} →{" "}
+          {formatMoney((bail.cautionVersee || 0) + suppMontant)}
+        </p>
+      ) : null}
 
       <div className="cag-total">
         <span>Total à payer{nbMois > 1 ? `  ${nbMois} mois` : ""}</span>

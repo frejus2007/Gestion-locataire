@@ -158,7 +158,8 @@ export default function ImmeubleDetail() {
       setErreur("La désignation du lot est requise.");
       return;
     }
-    const res = await saveLot(
+    // La fenêtre se ferme tout de suite : le lot apparaît dans la liste dès l'envoi.
+    const envoi = saveLot(
       {
         ...lot,
         immeubleId: id,
@@ -167,20 +168,23 @@ export default function ImmeubleDetail() {
       },
       null
     );
+    setLot({ ...LOT_VIDE });
+    setModaleLot(false);
+    setErreur(null);
+    const res = await envoi;
     if (!res.ok) {
       setErreur(res.erreur);
       return;
     }
     addToast("Lot ajouté");
-    setLot({ ...LOT_VIDE });
-    setModaleLot(false);
-    setErreur(null);
   };
 
   const supprimerLot = async () => {
-    const res = await removeLot(aSupprimerLot);
-    if (res.ok) addToast("Lot supprimé");
+    const cible = aSupprimerLot;
     setASupprimerLot(null);
+    const res = await removeLot(cible);
+    if (res.ok) addToast("Lot supprimé");
+    else setErreur(res.erreur);
   };
 
   return (

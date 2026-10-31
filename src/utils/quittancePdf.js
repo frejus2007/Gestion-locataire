@@ -232,7 +232,7 @@ export function libellePeriodeFacturee(q, periodes) {
 
 export function construireQuittance(q, options = {}) {
   const proprietaire = options.proprietaire || {};
-  const { cautionSur = "" } = options;
+  const { cautionSur = "", supplementCaution = 0 } = options;
   // `compress` évite qu'une image de 500 ko fasse gonfler le fichier : sans
   // lui, jsPDF recopie le logo pixel par pixel et la quittance dépasse 1 Mo.
   const doc = new jsPDF({ unit: "pt", format: "a4", orientation: "portrait", compress: true });
@@ -495,6 +495,16 @@ export function construireQuittance(q, options = {}) {
     y2 += 4;
     doc.setDrawColor(NOIR).setLineWidth(1);
     doc.line(L, y2, R, y2);
+  }
+
+  // Le supplément de caution n'est pas un mois de loyer : il est écrit à part,
+  // sous les détails, et fait partie de la somme reçue ci-dessous.
+  if (supplementCaution > 0) {
+    y2 += serré ? 12 : 16;
+    doc.setFont("helvetica", "normal").setFontSize(10).setTextColor(NOIR);
+    doc.text("Dont supplément de caution", L, y2);
+    doc.setFont("helvetica", "bold");
+    doc.text(`${formatMoneyPlain(supplementCaution)} FCFA`, R, y2, { align: "right" });
   }
 
   /* ============ LA SOMME DE / PAYÉ PAR / LETTRES / SIGNATURE ============ */

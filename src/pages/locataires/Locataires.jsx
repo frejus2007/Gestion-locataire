@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { useApp } from "../../context/AppContext";
 import { useToast } from "../../context/ToastContext";
-import { Card, ConfirmDialog, EmptyState } from "../../components/ui";
+import { Card, ConfirmDialog, EmptyState, TableauDefilable } from "../../components/ui";
 import { formatMoney, formatDate } from "../../utils/format";
 import Encaissement from "../paiements/Encaissement";
 import EnregistrerLocataire from "./EnregistrerLocataire";
@@ -90,10 +90,12 @@ export default function Locataires() {
 
   const supprimer = async () => {
     const cible = lignes.find((l) => l.bail.id === aSupprimer);
+    // La fenêtre se ferme tout de suite ; si le serveur refuse, la ligne revient
+    // d'elle-même avec l'écoute, et le message le dit.
+    setASupprimer(null);
     const res = await removeLocataire(cible?.locataire?.id);
     if (res?.ok !== false) {
       addToast("Locataire supprimé", "success");
-      setASupprimer(null);
     } else {
       addToast(res?.error || "Suppression impossible", "error");
     }
@@ -164,7 +166,7 @@ export default function Locataires() {
             }
           />
         ) : (
-          <div className="cag-table-wrap">
+          <TableauDefilable>
             <table className="cag-table">
               <thead>
                 <tr>
@@ -264,7 +266,7 @@ export default function Locataires() {
                 ))}
               </tbody>
             </table>
-          </div>
+          </TableauDefilable>
         )}
       </Card>
 

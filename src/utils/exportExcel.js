@@ -5,6 +5,10 @@
 import * as XLSX from "xlsx";
 import { formatDate, periodeToLabel } from "./format.js";
 
+// Ce qu'un versement rapporte : le supplément de caution n'est pas une recette.
+// Même règle que les écrans (recetteDuVersement dans AppContext).
+const recetteDuVersement = (p) => (Number(p.montant) || 0) - (Number(p.supplementCaution) || 0);
+
 /**
  * Télécharge un classeur XLSX dans le navigateur avec gestion de repli (Blob).
  */
@@ -63,7 +67,7 @@ export function exporterOperationsExcel({
     : "Jean-Marc KOUASSI";
   const telephoneBailleur = proprietaire?.telephone || "+229 97 12 34 56";
 
-  const totalRecettes = recettes.reduce((s, r) => s + (Number(r.montant) || 0), 0);
+  const totalRecettes = recettes.reduce((s, r) => s + recetteDuVersement(r), 0);
   const totalDepenses = depenses.reduce((s, d) => s + (Number(d.montant) || 0), 0);
   const soldeNet = totalRecettes - totalDepenses;
 
@@ -101,9 +105,9 @@ export function exporterOperationsExcel({
       telephone: r.locataire?.telephone || "—",
       motif: notePaiement,
       mode: modeLabel(r.mode),
-      entree: Number(r.montant) || 0,
+      entree: recetteDuVersement(r),
       sortie: 0,
-      soldeOp: Number(r.montant) || 0,
+      soldeOp: recetteDuVersement(r),
     });
   }
 
@@ -432,7 +436,7 @@ export function exporterOperationsAnnuellesExcel({
     const recMois = paiementsAnnee.filter((p) => p.date.startsWith(prefix));
     const depMois = depensesAnnee.filter((d) => d.date.startsWith(prefix));
 
-    const totalRec = recMois.reduce((s, p) => s + (Number(p.montant) || 0), 0);
+    const totalRec = recMois.reduce((s, p) => s + recetteDuVersement(p), 0);
     const totalDep = depMois.reduce((s, d) => s + (Number(d.montant) || 0), 0);
 
     return {
@@ -497,9 +501,9 @@ export function exporterOperationsAnnuellesExcel({
       tiers: loc ? `${loc.nom} ${loc.prenoms}`.trim() : "—",
       motif: notePaiement,
       mode: modeLabel(p.mode),
-      entree: Number(p.montant) || 0,
+      entree: recetteDuVersement(p),
       sortie: 0,
-      soldeOp: Number(p.montant) || 0,
+      soldeOp: recetteDuVersement(p),
     });
   }
 

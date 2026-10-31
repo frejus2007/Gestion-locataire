@@ -19,7 +19,7 @@ import {
   periodesEntre,
   comparePeriode,
 } from "../../utils/format";
-import { postesALZero } from "../../data/db.firebase";
+import { postesALZero } from "../../data/db.supabase";
 
 const CAUTIONS = [
   { id: "non-versee", label: "Non versée" },
@@ -56,7 +56,7 @@ export default function BailForm() {
     dateDebut: AUJOURDHUI,
     dateFin: "",
     loyerMensuel: "",
-cautionVersee: 0,
+cautionVersee: "",
   cautionStatut: "non-versee",
   cautionSur: "",
     notes: "",
@@ -261,7 +261,7 @@ cautionVersee: Number(form.cautionVersee) || 0,
                 <TextInput
                   type="number"
                   min="0"
-                  value={form.cautionVersee}
+                  value={form.cautionVersee || ""}
                   onChange={set("cautionVersee")}
                   placeholder="100000"
                 />

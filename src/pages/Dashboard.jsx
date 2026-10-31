@@ -78,14 +78,15 @@ function CustomChartTooltip({ active, payload }) {
 
 export default function Dashboard() {
   const {
-    paiements,
     impayesGlobaux,
     cautionTotale,
     tauxOccupation,
     serieMensuelle,
+    journalPeriode,
     bilanImmeuble,
     locatairesParId,
     immeubles,
+    paiements,
   } = useApp();
 
   const [onglet, setOnglet] = useState("vue");
@@ -107,16 +108,16 @@ export default function Dashboard() {
   });
 
   const totalSurEtendue = serie.reduce((sum, s) => sum + s.recettes, 0);
-  const moyenneMensuelle = Math.round(totalSurEtendue / (serie.length || 1));
-
   const moisRecord = [...serie].sort((a, b) => b.recettes - a.recettes)[0];
   const moisActifs = serie.filter((s) => s.recettes > 0).length;
+  // « par mois actif » : on divise par les mois qui ont des rentrées, pas par
+  // tous les mois de la période, sinon la moyenne tombe sous les recettes réelles.
+  const moyenneMensuelle = Math.round(totalSurEtendue / (moisActifs || 1));
   const regularite = Math.round((moisActifs / (serie.length || 1)) * 100);
 
   const moisCourant = periodeCourante();
-  const recettesMois = paiements
-    .filter((p) => p.date.slice(0, 7) === moisCourant)
-    .reduce((s, p) => s + p.montant, 0);
+  // Même calcul que la courbe et les fiches immeubles : une seule source.
+  const recettesMois = journalPeriode(moisCourant).totalRecettes;
 
   const impayes = impayesGlobaux();
   const detteTotale = impayes.reduce((s, x) => s + x.solde, 0);

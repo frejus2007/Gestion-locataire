@@ -378,3 +378,24 @@ export function cleDepuisTexte(valeur) {
     .filter((part) => CLES_CAUTION.has(part));
 }
 
+// Les deux immeubles Ina sont dans le même quartier : la quittance doit dire
+// lequel des deux loue le locataire. Le type se lit dans le nom de l'immeuble.
+const PREFIXES_ADRESSE_LOCATIVE = [
+  { motifs: ["BOUTIQUE", "INA"], prefixe: "Boutique Ina" },
+  { motifs: ["RESIDENCE", "INA"], prefixe: "Résidence Ina" },
+];
+
+/** Adresse locative d'un immeuble, préfixée par son type quand il est connu. */
+export function adresseLocativeImmeuble(immeuble) {
+  if (!immeuble) return "";
+  const adresse = [immeuble.adresse, immeuble.ville].filter(Boolean).join(", ");
+  const nom = String(immeuble.nom || "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toUpperCase();
+  const regle = PREFIXES_ADRESSE_LOCATIVE.find(({ motifs }) =>
+    motifs.every((motif) => nom.includes(motif))
+  );
+  return [regle?.prefixe, adresse].filter(Boolean).join(", ");
+}
+

@@ -15,8 +15,8 @@ import { useParams, Link, useNavigate } from "react-router-dom";
 import { Save, X, Users } from "lucide-react";
 import { useApp } from "../../context/AppContext";
 import { useToast } from "../../context/ToastContext";
-import { Card, Field, TextInput, Select, ErrorBanner, EmptyState } from "../../components/ui";
-import { periodeCourante } from "../../utils/format";
+import { Card, Field, TextInput, Select, ErrorBanner, EmptyState, ChoixCaution } from "../../components/ui";
+import { formatMoney, periodeCourante } from "../../utils/format";
 
 const LOT_NEUF = "__nouveau__";
 
@@ -29,11 +29,16 @@ const VIDE = {
   pieceNumero: "",
   email: "",
   notes: "",
+  immeubleId: "",
   lotId: "",
   nouveauLot: "",
   numeroLot: "",
   loyerMensuel: "",
   dateDebut: new Date().toISOString().slice(0, 10),
+  dateFin: "",
+  cautionVersee: 0,
+  cautionStatut: "non-versee",
+  cautionSur: "",
 };
 
 const NATURES_PIECE = [
@@ -42,6 +47,12 @@ const NATURES_PIECE = [
   { id: "Attestation", label: "Attestation d'identité" },
   { id: "Permis", label: "Permis de conduire" },
   { id: "Autre", label: "Autre" },
+];
+
+const CAUTIONS = [
+  { id: "non-versee", label: "Non versée" },
+  { id: "deposee", label: "Déposée — conservée" },
+  { id: "retenue", label: "Retenue (dommages, impayés)" },
 ];
 
 export default function LocataireForm() {
@@ -72,6 +83,8 @@ export default function LocataireForm() {
   // Le numéro d'appartement appartient au logement, pas au locataire : c'est
   // lui qui est imprimé sur la quittance. On le lit donc sur le lot du bail.
   const lotDuBail = bailDuLocataire ? lotsParId.get(bailDuLocataire.lotId) : null;
+  // La caution déjà versée : un nouveau versement s'y ajoute, il ne la remplace pas.
+  const cautionDejaVersee = Number(bailDuLocataire?.cautionVersee) || 0;
 
   const [form, setForm] = useState(() => ({
     ...VIDE,
@@ -79,8 +92,13 @@ export default function LocataireForm() {
     ...(bailDuLocataire
       ? {
           lotId: bailDuLocataire.lotId || "",
+          immeubleId: lotDuBail?.immeubleId || "",
           loyerMensuel: String(bailDuLocataire.loyerMensuel || ""),
           dateDebut: bailDuLocataire.dateDebut || VIDE.dateDebut,
+          dateFin: bailDuLocataire.dateFin || "",
+          cautionVersee: "",
+          cautionStatut: bailDuLocataire.cautionStatut || "non-versee",
+          cautionSur: bailDuLocataire.cautionSur || "",
           numeroLot: lotDuBail?.numero || "",
         }
       : {}),
@@ -109,7 +127,9 @@ export default function LocataireForm() {
   // Logements libres : un logement déjà loué n'est pas proposé, sauf s'il s'agit
   // du bail en cours d'édition.
   const lotsLibres = lots.filter(
-    (l) => !bailActifDuLot(l.id) || l.id === bailDuLocataire?.lotId
+    (l) =>
+      (!form.immeubleId || l.immeubleId === form.immeubleId) &&
+      (!bailActifDuLot(l.id) || l.id === bailDuLocataire?.lotId)
   );
 
   const lotChoisi = form.lotId && form.lotId !== LOT_NEUF ? lotsParId.get(form.lotId) : null;
@@ -130,6 +150,9 @@ export default function LocataireForm() {
     }
     if (!(Number(form.loyerMensuel) > 0)) e.loyerMensuel = "Le loyer mensuel est requis";
     if (!form.dateDebut) e.dateDebut = "La date d'entrée est requise";
+    if (form.dateFin && form.dateFin < form.dateDebut) {
+      e.dateFin = "La sortie doit être postérieure à l'entrée";
+    }
 
     setErreurs(e);
     return Object.keys(e).length === 0;
@@ -225,11 +248,11 @@ export default function LocataireForm() {
         lotId,
         locataireId,
         dateDebut: form.dateDebut,
-        dateFin: bailDuLocataire?.dateFin || null,
+        dateFin: form.dateFin || null,
         loyerMensuel: loyer,
-        cautionVersee: bailDuLocataire?.cautionVersee ?? 0,
-        cautionStatut: bailDuLocataire?.cautionStatut || "non-versee",
-        cautionSur: bailDuLocataire?.cautionSur || "",
+        cautionVersee: cautionDejaVersee + (Number(form.cautionVersee) || 0),
+        cautionStatut: form.cautionStatut,
+        cautionSur: form.cautionSur || "",
         fraisDefaut: bailDuLocataire?.fraisDefaut || {
           eau: 0, electricite: 0, ordures: 0, degats: 0, autre1: 0, autre2: 0,
         },
@@ -300,6 +323,20 @@ export default function LocataireForm() {
 
         <Card title="Logement et loyer">
           <div className="form-grid">
+            <Field label="Immeuble" error={erreurs.immeubleId} className="span-2">
+              <Select
+                value={form.immeubleId || ""}
+                onChange={(e) => {
+                  setForm((f) => ({ ...f, immeubleId: e.target.value, lotId: "" }));
+                  setErreurs((x) => ({ ...x, immeubleId: undefined, lotId: undefined }));
+                }}
+                options={[
+                  { id: "", label: immeubles.length ? "Tous les immeubles" : "Aucun immeuble : créez-le d'abord" },
+                  ...immeubles.map((i) => ({ id: i.id, label: i.nom })),
+                ]}
+              />
+            </Field>
+
             <Field label="Logement" required error={erreurs.lotId} className="span-2">
               <Select
                 value={form.lotId || ""}
@@ -331,16 +368,6 @@ export default function LocataireForm() {
 
             {form.lotId === LOT_NEUF ? (
               <>
-                <Field label="Immeuble" required error={erreurs.immeubleId} className="span-2">
-                  <Select
-                    value={form.immeubleId || ""}
-                    onChange={set("immeubleId")}
-                    options={[
-                      { id: "", label: immeubles.length ? "Choisissez l'immeuble" : "Aucun immeuble : créez-le d'abord" },
-                      ...immeubles.map((i) => ({ id: i.id, label: i.nom })),
-                    ]}
-                  />
-                </Field>
                 <Field label="Désignation du nouveau logement" required error={erreurs.nouveauLot} className="span-2">
                   <TextInput
                     value={form.nouveauLot}
@@ -384,7 +411,53 @@ export default function LocataireForm() {
                 error={erreurs.dateDebut}
               />
             </Field>
+
+            <Field label="Date de sortie" error={erreurs.dateFin} hint="vide si le bail est en cours">
+              <TextInput
+                type="date"
+                value={form.dateFin || ""}
+                min={form.dateDebut}
+                onChange={set("dateFin")}
+                error={erreurs.dateFin}
+              />
+            </Field>
           </div>
+        </Card>
+
+        <Card title="Caution">
+          <div className="form-grid">
+            <Field
+              label={bailDuLocataire ? "Nouveau versement de caution" : "Montant versé"}
+              hint={cautionDejaVersee > 0 ? `Déjà versé : ${formatMoney(cautionDejaVersee)} — ajouté au total` : undefined}
+            >
+              <TextInput
+                type="number"
+                min="0"
+                step="1000"
+                value={form.cautionVersee || ""}
+                onChange={set("cautionVersee")}
+              />
+            </Field>
+            <Field label="Statut">
+              <Select value={form.cautionStatut} onChange={set("cautionStatut")} options={CAUTIONS} />
+            </Field>
+            <Field label="La caution couvre" className="span-2">
+              <ChoixCaution
+                valeur={form.cautionSur}
+                onChange={(v) => setForm((f) => ({ ...f, cautionSur: v }))}
+              />
+            </Field>
+          </div>
+        </Card>
+
+        <Card title="Notes">
+          <textarea
+            className="input"
+            rows={3}
+            value={form.notes || ""}
+            onChange={set("notes")}
+            placeholder="Contacts d'urgence, particularités du dossier…"
+          />
         </Card>
 
         <div className="form-actions">

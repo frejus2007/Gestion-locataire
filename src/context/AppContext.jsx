@@ -7,9 +7,16 @@
 // rendu. Les données vivent donc dans un état, chargées au montage et
 // rechargées après chaque écriture.
 
-import { createContext, useContext, useState, useCallback, useMemo, useEffect } from "react";
-import * as db from "../data/db.firebase";
+import { createContext, useContext, useState, useCallback, useMemo, useEffect, useRef } from "react";
+import * as db from "../data/db.supabase";
 import { useAuth } from "./AuthContext";
+import {
+  fusionner,
+  supprimerBail,
+  supprimerImmeuble,
+  supprimerLocataire,
+  supprimerPaiement,
+} from "./optimiste";
 import { comparePeriode, periodeCourante } from "../utils/format";
 
 const { CATEGORIES_DEPENSE, MOIS_DE_PAYEMENT, LIGNES_FRAIS } = db;
@@ -36,6 +43,10 @@ const VIDE = {
 export function AppProvider({ children }) {
   const { isAuthenticated } = useAuth();
   const [donnees, setDonnees] = useState(VIDE);
+  // Dernier état connu, lisible sans attendre le rendu : une action enchaînée
+  // juste après une autre doit partir de l'état déjà modifié.
+  const donneesRef = useRef(VIDE);
+  donneesRef.current = donnees;
   const [loading, setLoading] = useState(true);
   const [erreur, setErreur] = useState(null);
 
@@ -75,21 +86,50 @@ export function AppProvider({ children }) {
       ),
     ]);
 
-  /** Relit tout. Réservé au démarrage et aux retours d、强 onglet. */
-  const refresh = useCallback(async () => {
-    try {
-      const cles = TOUTES;
-      const valeurs = await avecDelai(Promise.all(cles.map((c) => LECTEURS[c]())));
-      const lu = Object.fromEntries(cles.map((c, i) => [c, valeurs[i]]));
-      setDonnees(lu);
-      setErreur(null);
-      return lu;
-    } catch (e) {
-      setErreur(e.message);
-      return null;
-    } finally {
-      setLoading(false);
+  /**
+   * Relit tout. Réservé au démarrage et aux retours d'onglet.
+   *
+   * Une relecture déjà en vol est partagée : le retour sur l'onglet déclenche à
+   * la fois `visibilitychange` et `focus`, et deux relectures complètes partaient
+   * alors en parallèle pour le même résultat.
+   */
+  const relectureEnVol = useRef(null);
+  // Chaque relecture porte un numéro d'ordre. Deux relectures peuvent se
+  // croiser, l'action suivante ne les attend plus : la plus ancienne ne doit
+  // jamais écraser une collection déjà relue plus récemment.
+  const ordre = useRef(0);
+  const dernierAppliquee = useRef({});
+  const appliquer = useCallback((maj, rang) => {
+    const retenues = {};
+    for (const [c, valeur] of Object.entries(maj)) {
+      if (rang > (dernierAppliquee.current[c] ?? 0)) {
+        retenues[c] = valeur;
+        dernierAppliquee.current[c] = rang;
+      }
     }
+    if (Object.keys(retenues).length) setDonnees((d) => ({ ...d, ...retenues }));
+  }, []);
+  const refresh = useCallback(() => {
+    if (relectureEnVol.current) return relectureEnVol.current;
+    const rang = ++ordre.current;
+    relectureEnVol.current = (async () => {
+      try {
+        const cles = TOUTES;
+        const valeurs = await avecDelai(Promise.all(cles.map((c) => LECTEURS[c]())));
+        const lu = Object.fromEntries(cles.map((c, i) => [c, valeurs[i]]));
+        appliquer(lu, rang);
+        setErreur(null);
+        return lu;
+      } catch (e) {
+        setErreur(e.message);
+        return null;
+      } finally {
+        setLoading(false);
+      }
+    })().finally(() => {
+      relectureEnVol.current = null;
+    });
+    return relectureEnVol.current;
   }, []);
 
   /**
@@ -102,10 +142,11 @@ export function AppProvider({ children }) {
   const refreshPartiel = useCallback(async (cles) => {
     const utiles = cles.filter((c) => LECTEURS[c]);
     if (!utiles.length) return null;
+    const rang = ++ordre.current;
     try {
       const valeurs = await avecDelai(Promise.all(utiles.map((c) => LECTEURS[c]())));
       const maj = Object.fromEntries(utiles.map((c, i) => [c, valeurs[i]]));
-      setDonnees((d) => ({ ...d, ...maj }));
+      appliquer(maj, rang);
       setErreur(null);
       return maj;
     } catch (e) {
@@ -119,62 +160,38 @@ export function AppProvider({ children }) {
   // et tous les appels seraient refusés, sans qu'aucun rechargement ne
   // rattrape l'erreur ensuite. On attend donc la connexion — et on vide les
   // données à la déconnexion, pour qu'un autre compte ne voie pas les siennes.
+  // Écoute en continu de la base. Chaque changement arrive dès qu'il est
+  // appliqué localement, avant la confirmation du serveur ; une coupure se
+  // rétablit seule, sans relecture périodique ni relecture au retour sur l'onglet.
   useEffect(() => {
-    if (isAuthenticated) {
-      refresh();
-    } else {
+    if (!isAuthenticated) {
       setDonnees(VIDE);
       setLoading(false);
+      return undefined;
     }
-  }, [isAuthenticated, refresh]);
+    return db.ecouterDonnees({
+      onChangement: (cle, valeur) => setDonnees((d) => ({ ...d, [cle]: valeur })),
+      onPret: () => {
+        setLoading(false);
+        setErreur(null);
+      },
+      onErreur: (message) => setErreur(message),
+    });
+  }, [isAuthenticated]);
 
-  // Une coupure réseau en cours d'usage ne déclenche aucune écriture : sans
-  // ce rappel, l'application continuerait d'afficher des chiffres périmés, et
-  // l'utilisateur prendrait le cache lu pour l'état réel. À la reconnexion,
-  // on relit.
+  // Une coupure réseau est signalée : les chiffres affichés peuvent être
+  // périmés tant que la connexion ne revient pas.
   useEffect(() => {
     const sortir = () =>
       setErreur("Connexion Internet perdue — les chiffres affichés peuvent être périmés");
-    const revenir = () => {
-      if (isAuthenticated) refresh();
-    };
+    const revenir = () => setErreur(null);
     window.addEventListener("offline", sortir);
     window.addEventListener("online", revenir);
     return () => {
       window.removeEventListener("offline", sortir);
       window.removeEventListener("online", revenir);
     };
-  }, [isAuthenticated, refresh]);
-
-  // Le canal Firestore peut tomber sans que l'ordinateur se déclare hors
-  // ligne : c'est exactement ce qui arrive quand la négociation QUIC échoue.
-  // Sans relecture périodique, aucun nouvel essai n'est fait et l'écran garde
-  // indéfiniment des données périmées. On repasse toutes les deux minutes —
-  // assez pour rester invisible en usage normal, assez pour ne pas laisser
-  // l'utilisateur longtemps sur des chiffres faux.
-  useEffect(() => {
-    if (!isAuthenticated) return undefined;
-    const minuteur = setInterval(() => {
-      if (document.visibilityState === "visible" && navigator.onLine) {
-        refresh();
-      }
-    }, 120000);
-    return () => clearInterval(minuteur);
-  }, [isAuthenticated, refresh]);
-
-  // Un onglet rouvert après une longue veille doit relire sans attendre.
-  useEffect(() => {
-    if (!isAuthenticated) return undefined;
-    const relire = () => {
-      if (document.visibilityState === "visible") refresh();
-    };
-    document.addEventListener("visibilitychange", relire);
-    window.addEventListener("focus", relire);
-    return () => {
-      document.removeEventListener("visibilitychange", relire);
-      window.removeEventListener("focus", relire);
-    };
-  }, [isAuthenticated, refresh]);
+  }, []);
 
   // Exécute une écriture, recharge ce qui a changé, et propage le résultat.
   // Toujours `{ ok, resultat }` ou `{ ok: false, erreur }` : les pages
@@ -185,16 +202,22 @@ export function AppProvider({ children }) {
   // trop étroite afficherait des données périmées jusqu'à la relecture
   // périodique. Le oubli le plus coûteux étant l'encaissement, qui touche les
   // loyers autant que les paiements, il est traité explicitement.
+  //
+  // La relecture ne retient pas l'utilisateur : dès que l'écriture est confirmée,
+  // la réponse part et la base se met à jour en arrière-plan. Une action qui a
+  // besoin des données fraîches — l'encaissement, qui lit les loyers qu'il vient
+  // de créer — passe `attendre: true`.
   const run = useCallback(
-    async (action, coles = TOUTES) => {
+    async (action, coles = TOUTES, { attendre = false } = {}) => {
       setLoading(true);
       try {
         const resultat = await action();
-        const donnees = await refreshPartiel(coles);
+        const relecture = refreshPartiel(coles);
+        const donnees = attendre ? await relecture : null;
         setLoading(false);
         return { ok: true, resultat, donnees };
       } catch (e) {
-        await refreshPartiel(coles);
+        refreshPartiel(coles);
         setErreur(e.message);
         setLoading(false);
         return { ok: false, erreur: e.message };
@@ -203,72 +226,172 @@ export function AppProvider({ children }) {
     [refreshPartiel]
   );
 
-  const actions = useMemo(
-    () => ({
+  // Écriture optimiste : l'affichage change tout de suite, puis le serveur confirme.
+  // `patch` reçoit l'état connu et renvoie les listes à remplacer. Si l'écriture
+  // échoue, `run` relit les collections concernées : l'état réel revient seul.
+  const lancer = useCallback(
+    (patch, ecriture, coles, options) => {
+      if (patch) {
+        const nouveau = patch(donneesRef.current);
+        donneesRef.current = { ...donneesRef.current, ...nouveau };
+        setDonnees((d) => ({ ...d, ...nouveau }));
+      }
+      return run(ecriture, coles, options);
+    },
+    [run]
+  );
+
+  const actions = useMemo(() => {
+    // Crée une ligne (identifiant choisi ici, pour l'afficher avant l'écriture)
+    // ou modifie une ligne existante.
+    const sauver = (cle, prefixe, { creer, modifier }, data, id, coles) => {
+      const cible = id || db.nextId(prefixe);
+      const ligne = { ...data, id: cible };
+      return lancer(
+        (d) => ({ [cle]: fusionner(d[cle], [ligne]) }),
+        () => (id ? modifier(id, data) : creer(ligne)),
+        coles
+      );
+    };
+    const retirerLigne = (cle, id, ecriture, coles) =>
+      lancer((d) => ({ [cle]: d[cle].filter((x) => x.id !== id) }), ecriture, coles);
+
+    return {
       refresh,
       run,
+      // Contrôle un encaissement sans l'écrire, pour refuser avant de fermer la fenêtre.
+      verifierEncaissement: (data) => db.preparerEncaissement(data, donneesRef.current),
 
       // Propriétaire
-      saveProprietaire: (champs) => run(() => db.updateProprietaire(champs), ["proprietaire"]),
+      saveProprietaire: (champs) =>
+        lancer(
+          (d) => ({ proprietaire: { ...d.proprietaire, ...champs } }),
+          () => db.updateProprietaire(champs),
+          ["proprietaire"]
+        ),
 
       // Immeubles : la suppression emporte les lots libres.
       saveImmeuble: (data, id = null) =>
-        run(
-          () => (id ? db.updateImmeuble(id, data) : db.createImmeuble(data)),
+        sauver(
+          "immeubles",
+          "imm",
+          { creer: db.createImmeuble, modifier: db.updateImmeuble },
+          data,
+          id,
           ["immeubles", "lots"]
         ),
-      removeImmeuble: (id) => run(() => db.deleteImmeuble(id), ["immeubles", "lots"]),
+      removeImmeuble: (id) =>
+        lancer(
+          (d) => supprimerImmeuble(d, id),
+          () => db.deleteImmeuble(id),
+          ["immeubles", "lots"]
+        ),
 
       // Lots
       saveLot: (data, id = null) =>
-        run(() => (id ? db.updateLot(id, data) : db.createLot(data)), ["lots"]),
-      removeLot: (id) => run(() => db.deleteLot(id), ["lots"]),
+        sauver("lots", "lot", { creer: db.createLot, modifier: db.updateLot }, data, id, ["lots"]),
+      removeLot: (id) => retirerLigne("lots", id, () => db.deleteLot(id), ["lots"]),
 
       // Locataires : la suppression emporte bail, loyers, paiements et quittances.
       saveLocataire: (data, id = null) =>
-        run(
-          () => (id ? db.updateLocataire(id, data) : db.createLocataire(data)),
+        sauver(
+          "locataires",
+          "loc",
+          { creer: db.createLocataire, modifier: db.updateLocataire },
+          data,
+          id,
           id ? ["locataires"] : ["locataires", "baux", "loyers", "paiements", "quittances"]
         ),
       removeLocataire: (id) =>
-        run(() => db.deleteLocataire(id), ["locataires", "baux", "loyers", "paiements", "quittances"]),
+        lancer(
+          (d) => supprimerLocataire(d, id),
+          () => db.deleteLocataire(id),
+          ["locataires", "baux", "loyers", "paiements", "quittances"]
+        ),
 
       // Baux : leurs loyers suivent, puisqu'ils en dépendent.
       saveBail: (data, id = null) =>
-        run(
-          () => (id ? db.updateBail(id, data) : db.createBail(data)),
+        sauver(
+          "baux",
+          "bail",
+          { creer: db.createBail, modifier: db.updateBail },
+          data,
+          id,
           ["baux", "lots", "locataires", "loyers"]
         ),
-      removeBail: (id) => run(() => db.deleteBail(id), ["baux", "loyers", "paiements", "quittances"]),
+      removeBail: (id) =>
+        lancer(
+          (d) => supprimerBail(d, id),
+          () => db.deleteBail(id),
+          ["baux", "loyers", "paiements", "quittances"]
+        ),
+
+      // Attend la relecture : l'encaissement qui suit lit les loyers créés ici.
       genererDepuis: (bailId, periodeDebut, periodeFin = null) =>
-        run(() => db.genererLoyersDepuis(bailId, periodeDebut, periodeFin), ["loyers", "baux"]),
+        run(
+          () => db.genererLoyersDepuis(bailId, periodeDebut, periodeFin),
+          ["loyers", "baux"],
+          { attendre: true }
+        ),
       genererPeriode: (periode) => run(() => db.genererLoyersPourPeriode(periode), ["loyers", "baux"]),
 
       // La main du propriétaire sur les mois : il ouvre ceux qu'il encaisse et
-      // retire ceux qu'il a ouverts par erreur. La suppression passe par la
-      // couche de données, qui refuse un mois portant déjà un paiement.
+      // retire ceux qu'il a ouverts par erreur. La base refuse un mois qui porte
+      // déjà un paiement.
       ajouterMois: (bailId, periode) =>
         run(() => db.genererLoyersDepuis(bailId, periode, periode), ["loyers", "baux"]),
-      removeLoyer: (id) => run(() => db.deleteLoyer(id), ["loyers"]),
+      removeLoyer: (id) => retirerLigne("loyers", id, () => db.deleteLoyer(id), ["loyers"]),
 
-      // Paiements : l'imputation change le statut des loyers concernés.
-      enregistrerPaiement: (data) =>
-        run(() => db.enregistrerPaiement(data), ["paiements", "loyers", "quittances", "baux"]),
+      // Paiements : l'encaissement est affiché tout de suite. Un refus de la base
+      // fait revenir l'état réel par la relecture.
+      enregistrerPaiement: (data) => {
+        let plan;
+        try {
+          plan = db.preparerEncaissement(data, donneesRef.current);
+        } catch (e) {
+          return Promise.resolve({ ok: false, erreur: e.message });
+        }
+        return lancer(
+          (d) => ({
+            paiements: fusionner(d.paiements, [plan.paiement]),
+            loyers: fusionner(d.loyers, plan.loyers),
+          }),
+          () => db.ecrireEncaissement(plan),
+          ["paiements", "loyers", "quittances", "baux"]
+        );
+      },
       removePaiement: (id) =>
-        run(() => db.deletePaiement(id), ["paiements", "loyers", "quittances"]),
+        lancer(
+          (d) => supprimerPaiement(d, id),
+          () => db.deletePaiement(id),
+          ["paiements", "loyers", "quittances"]
+        ),
 
       // Dépenses
       saveDepense: (data, id = null) =>
-        run(() => (id ? db.updateDepense(id, data) : db.createDepense(data)), ["depenses"]),
-      removeDepense: (id) => run(() => db.deleteDepense(id), ["depenses"]),
+        sauver(
+          "depenses",
+          "dep",
+          { creer: db.createDepense, modifier: db.updateDepense },
+          data,
+          id,
+          ["depenses"]
+        ),
+      removeDepense: (id) => retirerLigne("depenses", id, () => db.deleteDepense(id), ["depenses"]),
 
-      // Quittances
-      genererQuittance: (paiementId) => run(() => db.genererQuittance(paiementId), ["quittances", "counters"]),
+      // Quittances : la numérotation se fait dans la base ; on attend donc la réponse.
+      genererQuittance: (paiementId) =>
+        run(
+          () => db.genererQuittance(paiementId, db.contexteQuittanceDepuis(donneesRef.current)),
+          ["quittances", "counters"]
+        ),
       genererQuittancesManquantes: () =>
-        run(() => db.genererQuittancesManquantes(), ["quittances", "counters"]),
-    }),
-    [refresh, run]
-  );
+        run(
+          () => db.genererQuittancesManquantes(db.contexteQuittanceDepuis(donneesRef.current)),
+          ["quittances", "counters"]
+        ),
+    };
+  }, [refresh, run, lancer]);
 
 
   // Sélecteurs : soldes, statuts, totaux. Recalculés à chaque changement de
@@ -351,6 +474,14 @@ export function createSelecteurs(donnees) {
   const paiementsParId = new Map(paiements.map((p) => [p.id, p]));
   const quittancesParPaiement = new Map(quittances.map((q) => [q.paiementId, q]));
 
+  /**
+   * Ce qu'un versement rapporte réellement au propriétaire. Le supplément de
+   * caution est une caution : il rejoint le dépôt du bail, il n'est pas une
+   * recette. Il ne doit donc ni gonfler les recettes ni réduire une dette.
+   */
+  const recetteDuVersement = (p) =>
+    (Number(p.montant) || 0) - (Number(p.supplementCaution) || 0);
+
   const bailEstActif = (bail, ref = new Date()) => {
     if (!bail) return false;
     const auj = ref.toISOString().slice(0, 10);
@@ -374,7 +505,7 @@ export function createSelecteurs(donnees) {
    * générés jusqu'à sa fin. additionner tous ces mois donnait à chaque
    * locataire une dette imaginaire : au 1er octobre, novembre et décembre
    * s'ajoutaient au solde alors qu'ils ne sont pas dus. Le propriétaire
-   * voyait une urgence qui n'existait pas, et son locataire était税款 à tort.
+   * voyait une urgence qui n'existait pas, et son locataire était à tort.
    *
    * Un loyer n'entre donc dans la dette que le jour de son échéance. Avant,
    * c'est une facture à venir : elle reste visible, elle n'est pas due.
@@ -384,9 +515,28 @@ export function createSelecteurs(donnees) {
    */
   const estEchu = (loyer, ref) => estEchuPour(loyer, bauxParId.get(loyer.bailId), ref);
 
-  /** Loyers non soldés ET échus — la file des impayés. */
+  /**
+   * Ce que les versements couvrent du **loyer** d'un mois, plafonné au loyer.
+   * Chaque versement est lu séparément : deux règlements partiels du même mois
+   * s'additionnent, chacun avec la part « Loyer » de son propre détail.
+   */
+  const couvertSurLoyer = (loyer) => {
+    const loyerVal = loyerSeul(loyer);
+    const total = (paiementsParBail.get(loyer.bailId) || []).reduce(
+      (acc, p) =>
+        acc + couvertParLoyer((p.allocations || []).find((a) => a.loyerId === loyer.id), loyerVal),
+      0
+    );
+    return Math.min(total, loyerVal);
+  };
+
+  /**
+   * Loyers échus dont le **loyer** n'est pas entièrement couvert — la file des
+   * impayés. Le statut du loyer compte les charges : il ne sert pas ici, sinon
+   * une eau impayée ferait passer un mois réglé pour un impayé.
+   */
   const impayesDe = (bailId, ref = new Date()) =>
-    loyersDe(bailId).filter((l) => l.statut !== "paye" && estEchu(l, ref));
+    loyersDe(bailId).filter((l) => estEchu(l, ref) && loyerSeul(l) - couvertSurLoyer(l) > 0);
 
   /** Reste dû sur un loyer, compte tenu des paiements déjà alloués. */
   const resteDuLoyer = (loyerId) => {
@@ -459,20 +609,7 @@ export function createSelecteurs(donnees) {
    */
   const soldeBail = (bailId, ref = new Date()) => {
     const dus = (loyersParBail.get(bailId) || []).filter((l) => estEchu(l, ref));
-    const dette = dus.reduce((s, l) => {
-      const loyer = loyerSeul(l);
-      const couvert = (paiementsParBail.get(bailId) || []).reduce(
-        (acc, p) =>
-          acc
-          + couvertParLoyer(
-            (p.allocations || []).find((a) => a.loyerId === l.id),
-            loyer
-          ),
-        0
-      );
-      return s + Math.max(0, loyer - Math.min(couvert, loyer));
-    }, 0);
-    return dette;
+    return dus.reduce((s, l) => s + Math.max(0, loyerSeul(l) - couvertSurLoyer(l)), 0);
   };
 
   /** Un bail est-il à jour : aucun loyer échu et impayé. */
@@ -518,18 +655,11 @@ export function createSelecteurs(donnees) {
     const bailIds = new Set(baux.filter((b) => lotIds.has(b.lotId)).map((b) => b.id));
 
     let recettes = 0;
-    let attendu = 0;
     for (const p of paiements) {
       if (!bailIds.has(p.bailId)) continue;
       if (depuis && p.date < depuis) continue;
       if (jusquA && p.date > jusquA) continue;
-      recettes += p.montant;
-    }
-    for (const l of loyers) {
-      if (!bailIds.has(l.bailId)) continue;
-      if (depuis && `${l.periode}-01` < depuis) continue;
-      if (jusquA && `${l.periode}-28` > jusquA) continue;
-      attendu += l.montantDu;
+      recettes += recetteDuVersement(p);
     }
 
     const couts = depenses
@@ -537,11 +667,17 @@ export function createSelecteurs(donnees) {
       .filter((d) => (!depuis || d.date >= depuis) && (!jusquA || d.date <= jusquA));
     const totalCouts = couts.reduce((s, d) => s + d.montant, 0);
 
+    // La dette est celle des baux actifs, calculée comme partout ailleurs
+    // (soldeBail) : la somme des soldes des lots, qui est aussi ce que la fiche
+    // immeuble affiche ligne par ligne. Un calcul séparé donnait un autre total.
+    const dette = baux
+      .filter((b) => bailIds.has(b.id) && bailEstActif(b))
+      .reduce((s, b) => s + soldeBail(b.id), 0);
+
     const listeLots = lotsDImmeuble(immeubleId);
     return {
       recettes,
-      attendu,
-      dette: Math.max(0, attendu - recettes),
+      dette,
       depenses: totalCouts,
       resultat: recettes - totalCouts,
       nbLots: listeLots.length,
@@ -594,7 +730,7 @@ export function createSelecteurs(donnees) {
   const journalPeriode = (periode) => {
     const recettes = paiements.filter((p) => p.date.slice(0, 7) === periode);
     const couts = depenses.filter((d) => d.date.slice(0, 7) === periode);
-    const totalRecettes = recettes.reduce((s, p) => s + p.montant, 0);
+    const totalRecettes = recettes.reduce((s, p) => s + recetteDuVersement(p), 0);
     const totalCouts = couts.reduce((s, d) => s + d.montant, 0);
     return {
       periode,

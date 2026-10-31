@@ -1,5 +1,5 @@
 import { cleDepuisTexte, POSTES_CAUTION } from "../utils/format";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import { Inbox } from "lucide-react";
@@ -20,6 +20,63 @@ export function Card({ title, action, children, className = "", ...rest }) {
 }
 
 /** État vide : quand une liste n'a rien à afficher. */
+/**
+ * Tableau défilable horizontalement, avec la barre de défilement au-dessus.
+ *
+ * La barre native se trouve sous un tableau long, donc hors de vue. On la
+ * reproduit en haut, et les deux barres restent synchronisées. La barre du bas
+ * est masquée, mais le défilement reste possible.
+ */
+export function TableauDefilable({ children }) {
+  const haut = useRef(null);
+  const corps = useRef(null);
+  const [debord, setDebord] = useState({ contenu: 0, visible: 0 });
+
+  useEffect(() => {
+    const zone = corps.current;
+    const table = zone.querySelector("table");
+    const mesurer = () => setDebord({ contenu: table.scrollWidth, visible: zone.clientWidth });
+    mesurer();
+    const observateur = new ResizeObserver(mesurer);
+    observateur.observe(zone);
+    observateur.observe(table);
+    return () => observateur.disconnect();
+  }, []);
+
+  // Une synchronisation dans les deux sens : la seconde barre suit la première,
+  // et s'arrête là, puisque l'affectation d'une position identique ne déclenche
+  // plus de défilement.
+  const suivre = (source, cible) => {
+    if (cible.current && cible.current.scrollLeft !== source.current.scrollLeft) {
+      cible.current.scrollLeft = source.current.scrollLeft;
+    }
+  };
+
+  const deborde = debord.contenu > debord.visible;
+
+  return (
+    <>
+      {deborde ? (
+        <div
+          ref={haut}
+          className="cag-defil-haut"
+          onScroll={() => suivre(haut, corps)}
+          aria-hidden="true"
+        >
+          <div style={{ width: debord.contenu, height: 1 }} />
+        </div>
+      ) : null}
+      <div
+        ref={corps}
+        className="cag-table-wrap cag-sans-barre"
+        onScroll={() => suivre(corps, haut)}
+      >
+        {children}
+      </div>
+    </>
+  );
+}
+
 export function EmptyState({ icon: Icon = Inbox, message, action }) {
   return (
     <div className="empty-state">

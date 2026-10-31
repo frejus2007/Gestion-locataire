@@ -1,91 +1,84 @@
 import { createContext, useContext, useEffect, useState, useCallback } from "react";
-import {
-  onAuthStateChanged,
-  signInWithEmailAndPassword,
-  signOut,
-  updatePassword,
-  reauthenticateWithCredential,
-  EmailAuthProvider,
-} from "firebase/auth";
-import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
-import { auth, db } from "../firebase/config";
+import { supabase } from "../supabase/client";
 
 const AuthContext = createContext(null);
+
+// Le profil du propriétaire vit dans les métadonnées du compte Supabase.
+function profilDe(utilisateur) {
+  const meta = utilisateur.user_metadata || {};
+  const nomComplet = meta.full_name || meta.name || "";
+  const morceaux = nomComplet.split(" ").filter(Boolean);
+  return {
+    nom: meta.nom || morceaux.slice(-1).join(" ") || "",
+    prenoms: meta.prenoms || morceaux.slice(0, -1).join(" ") || nomComplet,
+    role: meta.role || "Bailleur gestionnaire",
+    cabinet: meta.cabinet || "Chabi Arnaud GOUNOU",
+  };
+}
+
+function versUtilisateur(utilisateur) {
+  return {
+    id: utilisateur.id,
+    uid: utilisateur.id,
+    email: utilisateur.email,
+    ...profilDe(utilisateur),
+    derniereConnexion: new Date().toISOString(),
+  };
+}
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
-      setLoading(true);
-      try {
-        if (firebaseUser) {
-          const ref = doc(db, "users", firebaseUser.uid);
-          const snap = await getDoc(ref);
-          let profile = {};
-          if (snap.exists()) profile = snap.data();
-          else {
-            profile = {
-              nom: firebaseUser.displayName?.split(" ")?.slice(-1)?.join(" ") || "",
-              prenoms: firebaseUser.displayName?.split(" ")?.slice(0, -1)?.join(" ") || firebaseUser.displayName || "",
-              role: "Bailleur gestionnaire",
-              cabinet: "Chabi Arnaud GOUNOU",
-              createdAt: serverTimestamp(),
-            };
-            await setDoc(ref, profile, { merge: true });
-          }
-          setUser({
-            id: firebaseUser.uid,
-            uid: firebaseUser.uid,
-            email: firebaseUser.email,
-            ...profile,
-            derniereConnexion: new Date().toISOString(),
-          });
-        } else {
-          setUser(null);
-        }
-      } catch (e) {
-        console.warn("Auth state error:", e);
-        setUser(null);
-      } finally {
-        setLoading(false);
-      }
+    let actif = true;
+    const { data: abonnement } = supabase.auth.onAuthStateChange((_evenement, session) => {
+      if (!actif) return;
+      setUser(session?.user ? versUtilisateur(session.user) : null);
+      setLoading(false);
     });
-    return () => unsub();
+    // Un abonnement ne se déclenche qu'au prochain changement : on lit la session
+    // courante pour l'état initial.
+    supabase.auth.getSession().then(({ data }) => {
+      if (!actif) return;
+      setUser(data.session?.user ? versUtilisateur(data.session.user) : null);
+      setLoading(false);
+    });
+    return () => {
+      actif = false;
+      abonnement.subscription.unsubscribe();
+    };
   }, []);
 
   const login = useCallback(async (email, password) => {
     setLoading(true);
     try {
-      const cred = await signInWithEmailAndPassword(auth, email, password);
-      return { ok: true, user: cred.user };
-    } catch (e) {
-      return { ok: false, error: messageAuth(e) };
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) return { ok: false, error: messageAuth(error) };
+      return { ok: true, user: data.user };
     } finally {
       setLoading(false);
     }
   }, []);
 
   const logout = useCallback(async () => {
-    await signOut(auth);
+    await supabase.auth.signOut();
     setUser(null);
   }, []);
 
   /**
    * Change le mot de passe du compte connecté.
    *
-   * Firebase exige qu'une opération sensible soit précédée d'une
-   * réauthentification : sans cela, une session restée ouverte sur un poste
-   * partagé suffirait à verrouiller le propriétaire hors de son propre compte.
-   * On redemande donc le mot de passe actuel avant d'accepter le nouveau — ce
-   * qui est de toute façon le comportement attendu.
+   * Par prudence, le mot de passe actuel est redemandé avant d'accepter le
+   * nouveau : une session restée ouverte sur un poste partagé ne doit pas suffire
+   * à verrouiller le propriétaire hors de son compte.
    *
    * @returns {Promise<{ok: boolean, error?: string}>}
    */
   const changePassword = useCallback(async (actuel, nouveau) => {
-    const u = auth.currentUser;
-    if (!u?.email) return { ok: false, error: "Aucun compte connecté" };
+    const { data } = await supabase.auth.getUser();
+    const email = data?.user?.email;
+    if (!email) return { ok: false, error: "Aucun compte connecté" };
     if (!actuel) return { ok: false, error: "Saisissez votre mot de passe actuel" };
     if (!nouveau || String(nouveau).length < 6) {
       return { ok: false, error: "Le nouveau mot de passe doit contenir au moins 6 caractères" };
@@ -93,16 +86,13 @@ export function AuthProvider({ children }) {
     if (actuel === nouveau) {
       return { ok: false, error: "Le nouveau mot de passe doit être différent de l'ancien" };
     }
-    try {
-      // Preuve que c'est bien le propriétaire : c'est cette étape qui fait
-      // échouer la saisie si le mot de passe actuel est faux.
-      const cred = EmailAuthProvider.credential(u.email, actuel);
-      await reauthenticateWithCredential(u, cred);
-      await updatePassword(u, nouveau);
-      return { ok: true };
-    } catch (e) {
-      return { ok: false, error: messageAuth(e) };
-    }
+    // Preuve que c'est bien le propriétaire : cette étape échoue si le mot de
+    // passe actuel est faux.
+    const verif = await supabase.auth.signInWithPassword({ email, password: actuel });
+    if (verif.error) return { ok: false, error: messageAuth(verif.error) };
+    const { error } = await supabase.auth.updateUser({ password: nouveau });
+    if (error) return { ok: false, error: messageAuth(error) };
+    return { ok: true };
   }, []);
 
   return (
@@ -122,31 +112,29 @@ export function AuthProvider({ children }) {
 }
 
 /**
- * Traduit les codes d'erreur Firebase en français.
+ * Traduit les erreurs de Supabase Auth en français.
  *
- * Les messages bruts sont en anglais et parfois peu parlants («
- * auth/wrong-password »), ce qui laisse le propriétaire devant une impasse
- * sans savoir quoi corriger.
+ * Les messages bruts sont en anglais et peu parlants : le propriétaire doit
+ * savoir quoi corriger.
  */
 function messageAuth(e) {
   switch (e?.code) {
-    case "auth/wrong-password":
-    case "auth/invalid-credential":
-      return "Mot de passe actuel incorrect";
-    case "auth/invalid-email":
-      return "Adresse email invalide";
-    case "auth/weak-password":
-      return "Ce mot de passe est trop faible";
-    case "auth/too-many-requests":
-      return "Trop de tentatives. Patientez quelques minutes avant de réessayer.";
-    case "auth/user-not-found":
-    case "auth/invalid-user-credentials":
+    case "invalid_credentials":
       return "Identifiants invalides";
-    case "auth/requires-recent-login":
-      return "Session trop ancienne. Déconnectez-vous et reconnectez-vous.";
-    case "auth/network-request-failed":
-      return "Connexion impossible. Vérifiez votre accès à Internet.";
+    case "invalid_email":
+    case "validation_failed":
+      return "Adresse email invalide";
+    case "weak_password":
+      return "Ce mot de passe est trop faible";
+    case "over_request_rate_limit":
+    case "over_email_send_rate_limit":
+      return "Trop de tentatives. Patientez quelques minutes avant de réessayer.";
+    case "email_not_confirmed":
+      return "Adresse email non confirmée. Vérifiez votre boîte de réception.";
     default:
+      if (e?.message?.toLowerCase().includes("fetch")) {
+        return "Connexion impossible. Vérifiez votre accès à Internet.";
+      }
       return e?.message || "Opération impossible";
   }
 }
