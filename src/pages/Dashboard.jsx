@@ -119,6 +119,44 @@ export default function Dashboard() {
   // Même calcul que la courbe et les fiches immeubles : une seule source.
   const recettesMois = journalPeriode(moisCourant).totalRecettes;
 
+  // Bilan d'un mois ou d'une année passés. Les années commencent au premier
+  // versement enregistré ; sans versement, seule l'année en cours est proposée.
+  const anneeCourante = Number(moisCourant.slice(0, 4));
+  const premierVersement = paiements.reduce(
+    (min, p) => (p.date && (!min || p.date < min) ? p.date : min),
+    null
+  );
+  const premiereAnnee = premierVersement ? Number(premierVersement.slice(0, 4)) : anneeCourante;
+  const [typePeriode, setTypePeriode] = useState("mois");
+  const [valeurPeriode, setValeurPeriode] = useState(moisCourant);
+
+  const optionsMois = [];
+  for (let y = anneeCourante; y >= premiereAnnee; y -= 1) {
+    const dernier = y === anneeCourante ? Number(moisCourant.slice(5, 7)) : 12;
+    for (let m = dernier; m >= 1; m -= 1) {
+      const p = `${y}-${String(m).padStart(2, "0")}`;
+      optionsMois.push({ valeur: p, label: periodeToLabel(p) });
+    }
+  }
+  const optionsAnnees = [];
+  for (let y = anneeCourante; y >= premiereAnnee; y -= 1) optionsAnnees.push({ valeur: String(y), label: String(y) });
+
+  const bilanPeriode = (() => {
+    const mois = typePeriode === "mois"
+      ? [valeurPeriode]
+      : Array.from({ length: 12 }, (_, i) => `${valeurPeriode}-${String(i + 1).padStart(2, "0")}`);
+    let recettes = 0;
+    let depenses = 0;
+    let versements = 0;
+    for (const m of mois) {
+      const j = journalPeriode(m);
+      recettes += j.totalRecettes;
+      depenses += j.totalCouts;
+      versements += j.recettes.length;
+    }
+    return { recettes, depenses, resultat: recettes - depenses, versements };
+  })();
+
   const impayes = impayesGlobaux();
   const detteTotale = impayes.reduce((s, x) => s + x.solde, 0);
   const taux = tauxOccupation();
@@ -219,6 +257,66 @@ export default function Dashboard() {
 
       {onglet === "vue" && (
         <div key="vue" className="tab-pane-transition">
+          <Card className="chart-card" style={{ marginBottom: "1.5rem" }}>
+            <div className="chart-header-container">
+              <div>
+                <h2 className="card-title">Bilan de la période</h2>
+                <p className="text-muted" style={{ fontSize: "0.8rem", margin: "0.15rem 0 0" }}>
+                  {typePeriode === "mois" ? periodeToLabel(valeurPeriode) : `Année ${valeurPeriode}`}
+                </p>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+                <select
+                  className="select"
+                  value={typePeriode}
+                  onChange={(e) => {
+                    const type = e.target.value;
+                    setTypePeriode(type);
+                    setValeurPeriode(type === "mois" ? moisCourant : String(anneeCourante));
+                  }}
+                  aria-label="Type de période"
+                >
+                  <option value="mois">Un mois</option>
+                  <option value="annee">Une année</option>
+                </select>
+                <select
+                  className="select"
+                  value={valeurPeriode}
+                  onChange={(e) => setValeurPeriode(e.target.value)}
+                  aria-label={typePeriode === "mois" ? "Mois" : "Année"}
+                >
+                  {(typePeriode === "mois" ? optionsMois : optionsAnnees).map((o) => (
+                    <option key={o.valeur} value={o.valeur}>{o.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="chart-kpi-strip">
+              <div className="chart-kpi-item">
+                <span className="chart-kpi-label">Recettes</span>
+                <span className="chart-kpi-value">{formatMoney(bilanPeriode.recettes)}</span>
+                <span className="chart-kpi-hint">hors supplément de caution</span>
+              </div>
+              <div className="chart-kpi-item">
+                <span className="chart-kpi-label">Dépenses</span>
+                <span className="chart-kpi-value">{formatMoney(bilanPeriode.depenses)}</span>
+                <span className="chart-kpi-hint">charges et travaux</span>
+              </div>
+              <div className="chart-kpi-item">
+                <span className="chart-kpi-label">Résultat</span>
+                <span className="chart-kpi-value" style={{ color: bilanPeriode.resultat >= 0 ? "var(--success)" : "var(--danger)" }}>
+                  {formatMoney(bilanPeriode.resultat)}
+                </span>
+                <span className="chart-kpi-hint">recettes moins dépenses</span>
+              </div>
+              <div className="chart-kpi-item">
+                <span className="chart-kpi-label">Versements</span>
+                <span className="chart-kpi-value">{bilanPeriode.versements}</span>
+                <span className="chart-kpi-hint">encaissements enregistrés</span>
+              </div>
+            </div>
+          </Card>
+
           {/* Courbe financière experte, étendue paramétrable */}
           <Card className="chart-card" style={{ marginBottom: "1.5rem" }}>
             <div className="chart-header-container">
@@ -467,7 +565,7 @@ export default function Dashboard() {
                           </td>
                           <td className="actions">
                             <Link
-                              to={`/locataires/${x.bail.locataireId}/paiement`}
+                              to={`/locataires/${x.bail.locataireId}`}
                               className="btn btn-small btn-secondary"
                             >
                               Encaisser

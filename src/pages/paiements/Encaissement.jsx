@@ -19,7 +19,7 @@ import { AlertTriangle, Check, Info } from "lucide-react";
 import { Modal } from "../../components/ui";
 import { useApp } from "../../context/AppContext";
 import { useToast } from "../../context/ToastContext";
-import { LIGNES_FRAIS, lignesPostesPour, POSTES_FRAIS } from "../../data/db.supabase";
+import { LIGNES_FRAIS, lignesPostesPour, POSTES_FRAIS, fraisDefautBail } from "../../data/db.supabase";
 import {
   formatMoney,
   periodeToLabel,
@@ -265,10 +265,15 @@ export default function Encaissement({
   // paiement trimestriel doit pouvoir les saisir toutes. La saisie est
   // mémorisée par bail, comme le reste de l'écran.
   const [saisie, setSaisie] = useState(null);
+  // Sans saisie pour ce mois, les charges sont pré-remplies avec les frais par
+  // défaut du bail. Elles restent modifiables ; seul le loyer reste fixe.
   const chargesDuMois = (mois) => {
     const mesValeurs =
       saisie && saisie.bailId === (bail?.id || "") ? saisie.valeurs[mois] : null;
-    return mesValeurs || Object.fromEntries(POSTES_FRAIS.map((k) => [k, 0]));
+    if (mesValeurs) return mesValeurs;
+    return bail
+      ? { ...fraisDefautBail(bail), loyer: 0 }
+      : Object.fromEntries(POSTES_FRAIS.map((k) => [k, 0]));
   };
 
   const majCharge = (mois, cle, valeur) => {

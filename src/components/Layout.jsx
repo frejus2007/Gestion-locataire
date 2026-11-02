@@ -15,6 +15,7 @@ import {
   Sun,
   AlertTriangle,
   LogOut,
+  History,
 } from "lucide-react";
 import { useApp } from "../context/AppContext";
 import BoutonInstaller from "./BoutonInstaller";
@@ -27,6 +28,7 @@ const NAVIGATION = [
   { section: "Patrimoine" },
   { to: "/immeubles", label: "Immeubles", icon: Building2 },
   { to: "/locataires", label: "Locataires", icon: Users },
+  { to: "/historique", label: "Historique", icon: History },
   { section: "Finances" },
   { to: "/paiements", label: "Paiements & Quittances", icon: Wallet },
 ];

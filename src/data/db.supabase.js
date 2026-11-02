@@ -82,9 +82,16 @@ export function nextId(prefix) {
 const totalPostes = (l) =>
   POSTES_FRAIS.reduce((s, cle) => s + (Number(l[cle]) || 0), 0);
 
-function fraisDefautBail(bail) {
-  const f = bail.fraisDefaut || {};
-  return Object.fromEntries(POSTES_FRAIS.map((cle) => [cle, Number(f[cle]) || 0]));
+/**
+ * Les frais par défaut d'un bail (eau, électricité, ordures, dégâts, autres).
+ * Ils pré-remplissent l'encaissement ; l'utilisateur peut les modifier chaque
+ * mois. Le loyer n'y figure jamais : il vient toujours du bail.
+ */
+export function fraisDefautBail(bail) {
+  const f = bail?.fraisDefaut || {};
+  return Object.fromEntries(
+    POSTES_FRAIS.filter((cle) => cle !== "loyer").map((cle) => [cle, Number(f[cle]) || 0])
+  );
 }
 
 // Un bail sans date exploitable — document ancien, import incomplet, saisie
@@ -116,12 +123,13 @@ const bailActifCouvre = (bail, periode, max = periodeCourante()) =>
  *      l'écran d'encaissement propose le loyer restant dû, qui n'est pas le
  *      loyer du mois, et l'écrire ici ferait descendre le loyer enregistré
  *      chaque fois qu'un reste est encaissé.
- *   2. Les **charges** ne font qu'augmenter. Un montant saisi zéro ne veut pas
- *      dire « aucune charge », cela veut dire « rien à ajouter ce jour-ci » :
- *      remettre l'eau à zéro effacerait une facture déjà établie.
+ *   2. Les **charges** sont celles saisies à l'encaissement : la dernière saisie
+ *      fait foi, à la hausse comme à la baisse. Une charge baissée est donc
+ *      bien reportée sur le loyer du mois.
  *
- * Le montant dû ne peut donc jamais passer sous ce qui est déjà encaissé, et
- * `enregistrerPaiement` refuse une affectation plus grande que le reste.
+ * Le montant dû ne passe jamais sous ce qui est déjà encaissé pour le mois :
+ * c'est corrigé par l'appelant (`preparerEncaissement`), qui connaît les
+ * versements existants.
  *
  * @returns {object} les champs à écrire sur le document loyer
  */
@@ -134,8 +142,7 @@ function appliquerDetailLoyer(loyer, detail) {
   const copie = { ...loyer };
   for (const cle of POSTES_FRAIS) {
     if (cle === "loyer") continue;
-    if (montants[cle] <= 0) continue;
-    if ((Number(loyer[cle]) || 0) >= montants[cle]) continue;
+    if ((Number(loyer[cle]) || 0) === montants[cle]) continue;
     champs[cle] = montants[cle];
     copie[cle] = montants[cle];
   }
@@ -219,6 +226,11 @@ async function lirePaiements() {
 async function loyersDuBail(bailId) {
   const data = verifier(await supabase.from("loyers").select("*").eq("bail_id", bailId));
   return new Map(data.map((l) => [l.periode, depuisBase(l)]));
+}
+
+async function loyersDuBailParId(bailId) {
+  const data = verifier(await supabase.from("loyers").select("*").eq("bail_id", bailId));
+  return new Map(data.map((l) => [l.id, depuisBase(l)]));
 }
 
 export const listImmeubles = () => toutes("immeubles");
@@ -348,7 +360,36 @@ export async function createBail(data) {
   return creer("baux", "bail", data);
 }
 
-export const updateBail = (id, data) => modifier("baux", id, data);
+/**
+ * Modifie un bail. Si ses frais par défaut changent, les mois qui n'ont encore
+ * aucun paiement reprennent les nouveaux montants : la ligne affiche ce qui est
+ * prévu. Un mois encaissé garde ce qui a été réellement saisi.
+ */
+export async function updateBail(id, data) {
+  const resultat = await modifier("baux", id, data);
+  if (data.fraisDefaut) {
+    await synchroniserFraisNonEncaisses({ id, fraisDefaut: data.fraisDefaut });
+  }
+  return resultat;
+}
+
+async function synchroniserFraisNonEncaisses(bail) {
+  const loyers = [...(await loyersDuBailParId(bail.id)).values()];
+  if (loyers.length === 0) return;
+  const ids = loyers.map((l) => l.id);
+  const allocations = verifier(
+    await supabase.from("paiement_allocations").select("loyer_id").in("loyer_id", ids)
+  );
+  const encaisses = new Set(allocations.map((a) => a.loyer_id));
+
+  const frais = fraisDefautBail(bail);
+  const total = totalPostes(frais);
+  for (const loyer of loyers) {
+    if (encaisses.has(loyer.id)) continue;
+    const champs = { ...frais, montantDu: (Number(loyer.loyer) || 0) + total };
+    verifier(await supabase.from("loyers").update(versBaseLigne(champs)).eq("id", loyer.id));
+  }
+}
 
 /** Supprime un bail avec ses loyers, paiements et quittances, en une transaction. */
 export async function deleteBail(id) {
@@ -367,6 +408,9 @@ export async function deleteDepense(id) {
 // --- Loyers ---
 
 function loyerNeuf(bail, periode) {
+  // Le mois porte les frais par défaut du bail, comme le loyer : ils s'affichent
+  // sur la ligne et se modifient à l'encaissement. Ils ne comptent jamais dans la
+  // dette, qui ne porte que sur le loyer.
   const postes = fraisDefautBail(bail);
   return {
     id: nextId("loy"),
@@ -395,6 +439,12 @@ async function insererLoyers(lignes) {
     );
   }
 }
+
+/**
+ * Crée les loyers manquants de tous les baux, du mois d'entrée au mois courant.
+ * Même fonction que la tâche quotidienne côté base : sans effet si tout est à jour.
+ */
+export const genererLoyersEchus = () => appeler("generer_loyers_echus", {});
 
 /** Crée les loyers manquants pour une période. Idempotent. */
 export async function genererLoyersPourPeriode(periode, bailIds = null, { jusquA = true } = {}) {
@@ -548,6 +598,13 @@ export function preparerEncaissement(data, etat) {
       if (Object.keys(champs).length > 0) champsParLoyer.set(loyer.id, champs);
     }
     montant = allocations.reduce((s, a) => s + a.montant, 0) + supplementCaution;
+
+    // Une charge baissée réduit le dû du mois, mais jamais sous ce qui est
+    // déjà encaissé pour ce mois : sinon le versement paraîtrait en trop.
+    for (const [loyerId, champs] of champsParLoyer) {
+      if (champs.montantDu === undefined) continue;
+      champs.montantDu = Math.max(champs.montantDu, payeSur(paiements, loyerId));
+    }
   }
   if (!Number.isSafeInteger(montant) || montant <= 0) {
     throw new Error("Le montant doit être un entier supérieur à zéro");

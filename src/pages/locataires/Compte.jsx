@@ -16,10 +16,10 @@ import {
   Printer,
   Users,
   FileText,
+  Plus,
   AlertTriangle,
   Check,
   Landmark,
-  Plus,
   Trash2,
 } from "lucide-react";
 import { useApp, estEchuPour } from "../../context/AppContext";
@@ -36,8 +36,8 @@ import Encaissement from "../paiements/Encaissement";
  * pas une dette si elle n'a pas été facturée, or elle est justement ce que le
  * propriétaire saisit à l'encaissement et pas avant.
  */
-function estSolde(loyer, paye) {
-  return loyerSeul(loyer) > 0 && paye >= loyerSeul(loyer);
+function estSolde(loyer, couvert) {
+  return loyerSeul(loyer) > 0 && couvert >= loyerSeul(loyer);
 }
 
 /** Le loyer seul d'un mois, hors charges. */
@@ -83,7 +83,6 @@ export default function Compte() {
   // facturer octobre.
 const [moisARegler, setMoisARegler] = useState(null);
   const [aSupprimer, setASupprimer] = useState(null);
-  const [occupe, setOccupe] = useState(false);
   const { addToast } = useToast();
   const { ajouterMois, removeLoyer } = useApp();
 
@@ -147,11 +146,23 @@ const payeParLoyer = new Map();
         couvert,
         // Un mois non échu ne pèse pas encore sur le cumul : le 1er novembre,
         // novembre commence à compter.
+        // Le reste dû de ce seul mois : c'est ce que la colonne Solde affiche.
+        reste: echu ? loyer - couvert : 0,
         solde: precedent + (echu ? loyer - couvert : 0),
       });
       return acc;
     }, []);
   }, [bail, loyersDe, paiementsDe]);
+
+  // Le mois suivant à ouvrir, pour un paiement d'avance.
+  const [occupe, setOccupe] = useState(false);
+  const moisSuivant = useMemo(() => {
+    if (lignes.length === 0) return bail?.dateDebut ? bail.dateDebut.slice(0, 7) : null;
+    const dernier = lignes.at(-1).loyer.periode;
+    const annee = Number(dernier.slice(0, 4));
+    const mois = Number(dernier.slice(5, 7));
+    return `${mois === 12 ? annee + 1 : annee}-${String(mois === 12 ? 1 : mois + 1).padStart(2, "0")}`;
+  }, [lignes, bail]);
 
   const totaux = useMemo(() => {
     const out = {};
@@ -163,25 +174,9 @@ const payeParLoyer = new Map();
 
   // Le bouton « Encaisser » se positionne sur le premier mois non soldé.
   const premierMoisDu = useMemo(() => {
-    const impaye = lignes.find(({ loyer, paye }) => !estSolde(loyer, paye));
+    const impaye = lignes.find(({ loyer, couvert }) => !estSolde(loyer, couvert));
     return impaye?.loyer.periode || lignes.at(-1)?.loyer.periode || null;
   }, [lignes]);
-
-  /**
-   * Le mois suivant à ouvrir.
-   *
-   * Les mois ne sont plus générés jusqu'à la fin du bail : le propriétaire
-   * ouvre lui-même ceux qu'il encaisse. Sans cela, novembre et décembre
-   * apparaissaient comme dus dès le 1er octobre, et le locataire le payait
-   * deux fois.
-   */
-  const moisSuivant = useMemo(() => {
-    if (lignes.length === 0) return bail?.dateDebut ? bail.dateDebut.slice(0, 7) : null;
-    const dernier = lignes.at(-1).loyer.periode;
-    const annee = Number(dernier.slice(0, 4));
-    const mois = Number(dernier.slice(5, 7));
-    return `${mois === 12 ? annee + 1 : annee}-${String(mois === 12 ? 1 : mois + 1).padStart(2, "0")}`;
-  }, [lignes, bail]);
 
   const ajouter = async () => {
     if (!bail || !moisSuivant) return;
@@ -214,6 +209,8 @@ const payeParLoyer = new Map();
   // Le tableau ligne à ligne, lui, garde tous les mois : un relevé doit montrer
   // l'horizon, pas seulement ce qui est exigible aujourd'hui.
   const soldeAffiche = bail ? soldesParBail.get(bail.id) ?? 0 : 0;
+  // Mois échus où le loyer n'est pas entièrement couvert : le nombre de dettes.
+  const nbMoisDus = lignes.filter((l) => l.echu && loyerSeul(l.loyer) - Math.min(l.couvert, loyerSeul(l.loyer)) > 0).length;
 
   // Totaux du relevé.
   //
@@ -230,6 +227,9 @@ const payeParLoyer = new Map();
     0
   );
   const totalPaye = lignes.reduce((s, l) => s + l.paye, 0);
+  // La colonne « Total » additionne les lignes telles qu'elles s'affichent :
+  // loyer et charges de chaque mois, mois à venir compris.
+  const totalFacture = lignes.reduce((s, l) => s + (Number(l.loyer.montantDu) || 0), 0);
   // Jamais négatif : payer plus que son loyer laisse le locataire à jour.
   const soldeReleve = Math.max(0, totalDu - totalCouvert);
 
@@ -329,18 +329,19 @@ const payeParLoyer = new Map();
         <div className={`cag-stat ${soldeAffiche > 0 ? "warn" : "ok"}`}>
           <div className="cag-stat-label">
             {soldeAffiche > 0 ? <AlertTriangle size={14} /> : <Check size={14} />}
-            Solde {soldeAffiche > 0 ? "(dette)" : "(à jour)"}
+            Dette totale
           </div>
-          <div className="cag-stat-value">
-            {soldeAffiche > 0 ? formatMoney(soldeAffiche) : "—"}
+          <div className="cag-stat-value">{formatMoney(soldeAffiche)}</div>
+          <div className="cag-stat-hint">
+            {nbMoisDus > 0 ? `${nbMoisDus} mois impayé${nbMoisDus > 1 ? "s" : ""}` : "à jour"}
           </div>
         </div>
         <div className="cag-stat">
           <div className="cag-stat-label">
-            <FileText size={14} /> Période courante
+            <FileText size={14} /> Entrée dans le logement
           </div>
           <div className="cag-stat-value" style={{ fontSize: "1.1rem" }}>
-            {periodeToLabel(bail.dateDebut)}
+            {bail.dateDebut ? formatDate(bail.dateDebut) : "—"}
           </div>
         </div>
       </div>
@@ -376,13 +377,13 @@ const payeParLoyer = new Map();
                 </tr>
               </thead>
               <tbody>
-                {lignes.map(({ loyer, paye, solde, echu, avecCharges }) => (
+                {lignes.map(({ loyer, paye, couvert, reste, echu, avecCharges }) => (
                   <tr
                     key={loyer.id}
-                    className={estSolde(loyer, paye) ? "" : "cag-ligne-cliquable"}
-                    onClick={() => !estSolde(loyer, paye) && setMoisARegler(loyer.periode)}
+                    className={estSolde(loyer, couvert) ? "" : "cag-ligne-cliquable"}
+                    onClick={() => !estSolde(loyer, couvert) && setMoisARegler(loyer.periode)}
                     title={
-                      estSolde(loyer, paye)
+                      estSolde(loyer, couvert)
                         ? undefined
                         : `Encaisser ${periodeToLabel(loyer.periode)}`
                     }
@@ -399,8 +400,8 @@ const payeParLoyer = new Map();
                     <td className="num cag-strong">{formatMoney(loyer.montantDu)}</td>
                     <td className={`num ${paye ? "" : "vide"}`}>{paye ? formatMoney(paye) : "—"}</td>
                     <td className="num">
-                      {solde > 0 ? (
-                        <span className="cag-pill money">{formatMoney(solde)}</span>
+                      {reste > 0 ? (
+                        <span className="cag-pill money">{formatMoney(reste)}</span>
                       ) : !echu ? (
                         // Facturé, pas encore dû : le relevé le montre, la dette
                         // ne le compte pas.
@@ -444,7 +445,7 @@ const payeParLoyer = new Map();
                       {totaux[p.key] > 0 ? formatMoney(totaux[p.key]) : "—"}
                     </td>
                   ))}
-                  <td className="num">{formatMoney(totalDu)}</td>
+                  <td className="num">{formatMoney(totalFacture)}</td>
                   <td className="num">{formatMoney(totalPaye)}</td>
 <td className="num">
                     {soldeReleve === 0 ? "à jour" : `${formatMoney(soldeReleve)} dû`}

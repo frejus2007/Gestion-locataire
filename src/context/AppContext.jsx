@@ -179,6 +179,13 @@ export function AppProvider({ children }) {
     });
   }, [isAuthenticated]);
 
+  // Rattrapage des loyers du mois à l'ouverture. La tâche quotidienne de la base
+  // les crée déjà ; cet appel ne fait rien si tout est à jour.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    db.genererLoyersEchus().catch((e) => console.error("Génération des loyers :", e));
+  }, [isAuthenticated]);
+
   // Une coupure réseau est signalée : les chiffres affichés peuvent être
   // périmés tant que la connexion ne revient pas.
   useEffect(() => {
@@ -335,11 +342,11 @@ export function AppProvider({ children }) {
         ),
       genererPeriode: (periode) => run(() => db.genererLoyersPourPeriode(periode), ["loyers", "baux"]),
 
-      // La main du propriétaire sur les mois : il ouvre ceux qu'il encaisse et
-      // retire ceux qu'il a ouverts par erreur. La base refuse un mois qui porte
-      // déjà un paiement.
+      // Le propriétaire ouvre le mois suivant quand un locataire paie d'avance.
+      // Le calendrier commun ouvre déjà les mois courants tout seul.
       ajouterMois: (bailId, periode) =>
         run(() => db.genererLoyersDepuis(bailId, periode, periode), ["loyers", "baux"]),
+
       removeLoyer: (id) => retirerLigne("loyers", id, () => db.deleteLoyer(id), ["loyers"]),
 
       // Paiements : l'encaissement est affiché tout de suite. Un refus de la base
@@ -439,9 +446,9 @@ export function periodeMois(ref) {
 export function estEchuPour(loyer, bail, ref = new Date()) {
   // Sans bail, la période fait foi : elle est au format « AAAA-MM ».
   if (!bail) return (loyer.periode || "") <= periodeMois(ref);
-  // Le jour d'échéance vient du bail ; il est modifiable car certains baux
-  // portent le 5 ou le 10 plutôt que le 1er. Un bail sans jour lisible
-  // retombe sur le 1er, qui est la règle usuelle.
+  // Selon le contrat, chaque début de mois est une dette : le loyer est dû dès
+  // le 1er. Le jour peut être propre à un bail ; un bail sans jour lisible
+  // retombe sur le 1er. Le délai de paiement (le 5) ne décale pas la dette.
   const jour = Number(bail.echeanceJour) || 1;
   return periodeMois(ref) > loyer.periode
     || (periodeMois(ref) === loyer.periode && ref.getDate() >= jour);

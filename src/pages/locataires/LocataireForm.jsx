@@ -10,9 +10,9 @@
 // l'utilisateur. Le bail est donc créé dans la foulée, sans lui demander de
 // décision à ce sujet.
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
-import { Save, X, Users } from "lucide-react";
+import { Save, X, Users, LogOut } from "lucide-react";
 import { useApp } from "../../context/AppContext";
 import { useToast } from "../../context/ToastContext";
 import { Card, Field, TextInput, Select, ErrorBanner, EmptyState, ChoixCaution } from "../../components/ui";
@@ -48,6 +48,39 @@ const NATURES_PIECE = [
   { id: "Permis", label: "Permis de conduire" },
   { id: "Autre", label: "Autre" },
 ];
+
+// Frais mensuels par défaut : ils pré-remplissent l'encaissement, mois par mois.
+const FRAIS_VIDES = {
+  eau: "", electricite: "", ordures: "", degats: "",
+  autre1: "", autre2: "", libelle1: "Autre 1", libelle2: "Autre 2",
+};
+
+/** Les frais enregistrés du bail, lus dans les champs du formulaire. */
+function fraisVersChamps(fraisDefaut) {
+  const champs = { ...FRAIS_VIDES };
+  for (const cle of ["eau", "electricite", "ordures", "degats", "autre1", "autre2"]) {
+    const v = Number(fraisDefaut?.[cle]) || 0;
+    champs[cle] = v ? String(v) : "";
+  }
+  champs.libelle1 = fraisDefaut?.libelle1 || FRAIS_VIDES.libelle1;
+  champs.libelle2 = fraisDefaut?.libelle2 || FRAIS_VIDES.libelle2;
+  return champs;
+}
+
+/** Les champs du formulaire, enregistrés sous la forme attendue par le bail. */
+function champsVersFrais(c) {
+  const montant = (v) => Math.max(0, Math.round(Number(v) || 0));
+  return {
+    eau: montant(c.eau),
+    electricite: montant(c.electricite),
+    ordures: montant(c.ordures),
+    degats: montant(c.degats),
+    autre1: montant(c.autre1),
+    autre2: montant(c.autre2),
+    libelle1: c.libelle1?.trim() || FRAIS_VIDES.libelle1,
+    libelle2: c.libelle2?.trim() || FRAIS_VIDES.libelle2,
+  };
+}
 
 const CAUTIONS = [
   { id: "non-versee", label: "Non versée" },
@@ -88,6 +121,7 @@ export default function LocataireForm() {
 
   const [form, setForm] = useState(() => ({
     ...VIDE,
+    frais: fraisVersChamps(null),
     ...(fiche || {}),
     ...(bailDuLocataire
       ? {
@@ -100,11 +134,26 @@ export default function LocataireForm() {
           cautionStatut: bailDuLocataire.cautionStatut || "non-versee",
           cautionSur: bailDuLocataire.cautionSur || "",
           numeroLot: lotDuBail?.numero || "",
+          frais: fraisVersChamps(bailDuLocataire.fraisDefaut),
         }
       : {}),
   }));
   const [erreurs, setErreurs] = useState({});
   const [erreurGlobale, setErreurGlobale] = useState(null);
+
+  // « Mettre fin au bail » : on fixe la date de sortie, puis on enregistre
+  // avec le formulaire normal. Le logement se libère selon cette date.
+  const formRef = useRef(null);
+  const [finDemandee, setFinDemandee] = useState(0);
+  useEffect(() => {
+    if (finDemandee > 0) formRef.current?.requestSubmit();
+  }, [finDemandee]);
+  const mettreFinAuBail = () => {
+    if (!window.confirm("Mettre fin à ce bail ? Le logement sera libéré à partir du lendemain de la date de sortie.")) return;
+    const aujourdhui = new Date().toISOString().slice(0, 10);
+    setForm((f) => ({ ...f, dateFin: f.dateFin || aujourdhui }));
+    setFinDemandee((n) => n + 1);
+  };
 
   if (id && !fiche) {
     return (
@@ -123,6 +172,9 @@ export default function LocataireForm() {
   }
 
   const set = (champ) => (e) => setForm((f) => ({ ...f, [champ]: e.target.value }));
+  const setFrais = (cle, valeur) =>
+    setForm((f) => ({ ...f, frais: { ...f.frais, [cle]: valeur } }));
+
 
   // Logements libres : un logement déjà loué n'est pas proposé, sauf s'il s'agit
   // du bail en cours d'édition.
@@ -232,7 +284,9 @@ export default function LocataireForm() {
 
       // Un locataire déjà établi sur ce logement ne peut pas l'être une
       // seconde fois : la chambre aurait deux loyers et une facture unique.
-      if (bailActifDuLot(lotId)) {
+      // En édition, le bail en cours est celui-là même : il ne compte pas.
+      const occupant = bailActifDuLot(lotId);
+      if (occupant && occupant.id !== bailDuLocataire?.id) {
         throw new Error(
           "Ce logement est déjà occupé par un bail en cours. Choisissez un autre logement."
         );
@@ -253,9 +307,7 @@ export default function LocataireForm() {
         cautionVersee: cautionDejaVersee + (Number(form.cautionVersee) || 0),
         cautionStatut: form.cautionStatut,
         cautionSur: form.cautionSur || "",
-        fraisDefaut: bailDuLocataire?.fraisDefaut || {
-          eau: 0, electricite: 0, ordures: 0, degats: 0, autre1: 0, autre2: 0,
-        },
+        fraisDefaut: champsVersFrais(form.frais),
         notes: bailDuLocataire?.notes || "",
       };
       const resBail = await saveBail(donneesBail, bailDuLocataire?.id || null);
@@ -294,7 +346,7 @@ export default function LocataireForm() {
 
       <ErrorBanner message={erreurGlobale} />
 
-      <form onSubmit={enregistrer}>
+      <form ref={formRef} onSubmit={enregistrer}>
         <Card title="Identité">
           <div className="form-grid">
             <Field label="Nom" required error={erreurs.nom}>
@@ -419,6 +471,68 @@ export default function LocataireForm() {
                 min={form.dateDebut}
                 onChange={set("dateFin")}
                 error={erreurs.dateFin}
+              />
+            </Field>
+            {bailDuLocataire && !bailDuLocataire.dateFin && (
+              <Field label="Fin du bail" className="span-2">
+                <button type="button" className="btn btn-danger" onClick={mettreFinAuBail}>
+                  <LogOut size={15} /> Mettre fin au bail et libérer le logement
+                </button>
+              </Field>
+            )}
+          </div>
+        </Card>
+
+        <Card title="Frais mensuels par défaut">
+          <p className="text-muted" style={{ fontSize: "0.82rem", margin: "0 0 0.75rem" }}>
+            Ces montants sont proposés à chaque encaissement. Ils restent modifiables ce mois-là ; le loyer, lui, ne change pas.
+          </p>
+          <div className="form-grid">
+            {[
+              ["eau", "Eau"],
+              ["electricite", "Électricité"],
+              ["ordures", "Ordures ménagères"],
+              ["degats", "Dégâts"],
+            ].map(([cle, label]) => (
+              <Field key={cle} label={label}>
+                <TextInput
+                  type="number"
+                  min="0"
+                  step="100"
+                  value={form.frais[cle]}
+                  onChange={(e) => setFrais(cle, e.target.value)}
+                  aria-label={`${label} par défaut`}
+                />
+              </Field>
+            ))}
+            <Field label="Intitulé, autre 1">
+              <TextInput
+                value={form.frais.libelle1}
+                onChange={(e) => setFrais("libelle1", e.target.value)}
+              />
+            </Field>
+            <Field label="Montant, autre 1">
+              <TextInput
+                type="number"
+                min="0"
+                step="100"
+                value={form.frais.autre1}
+                onChange={(e) => setFrais("autre1", e.target.value)}
+              />
+            </Field>
+            <Field label="Intitulé, autre 2">
+              <TextInput
+                value={form.frais.libelle2}
+                onChange={(e) => setFrais("libelle2", e.target.value)}
+              />
+            </Field>
+            <Field label="Montant, autre 2">
+              <TextInput
+                type="number"
+                min="0"
+                step="100"
+                value={form.frais.autre2}
+                onChange={(e) => setFrais("autre2", e.target.value)}
               />
             </Field>
           </div>

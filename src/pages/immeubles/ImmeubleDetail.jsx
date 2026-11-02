@@ -380,7 +380,7 @@ export default function ImmeubleDetail() {
                       <td className="actions">
                         {bail && (
                           <Link
-                            to={`/locataires/${bail.locataireId}/paiement`}
+                            to={`/locataires/${bail.locataireId}`}
                             className="btn btn-small btn-primary"
                             title="Encaisser un versement"
                           >
@@ -433,7 +433,7 @@ export default function ImmeubleDetail() {
                       {formatMoney(x.dette)}
                     </td>
                     <td className="actions">
-                      <Link to={`/locataires/${x.bail.locataireId}/paiement`} className="btn btn-small btn-primary">
+                      <Link to={`/locataires/${x.bail.locataireId}`} className="btn btn-small btn-primary">
                         Encaisser
                       </Link>
                     </td>

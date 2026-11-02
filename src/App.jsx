@@ -23,6 +23,7 @@ const Dashboard = lazy(() => import("./pages/Dashboard"));
 const ImmeubleList = lazy(() => import("./pages/immeubles/ImmeubleList"));
 const ImmeubleDetail = lazy(() => import("./pages/immeubles/ImmeubleDetail"));
 const ImmeubleForm = lazy(() => import("./pages/immeubles/ImmeubleForm"));
+const Historique = lazy(() => import("./pages/Historique"));
 
 // Argent
 const PaiementsQuittances = lazy(() => import("./pages/PaiementsQuittances"));
@@ -136,6 +137,8 @@ export default function App() {
                     <Route path=":id/modifier" element={<LocataireForm />} />
                     <Route path=":id/bail" element={<BailForm />} />
                   </Route>
+
+                  <Route path="historique" element={<Historique />} />
 
                   <Route path="paiements" element={<PaiementsQuittances />} />
 
